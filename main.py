@@ -663,12 +663,45 @@ class MinecraftPlugin(Star):
     # ------------------------------------------------------------------
     # MC -> QQ 聊天桥接
     # ------------------------------------------------------------------
+    @staticmethod
+    def _is_local_peer(ip: str) -> bool:
+        """判断桥接对端是否来自本机回环或允许的本地网段。
+
+        桥接绑定默认 127.0.0.1，正常只有本机 MC mod 通过回环连接。
+        公网扫描器/恶意连接（如 0.0.0.0 绑定被公网探测到）将被拒绝。
+        """
+        if not ip:
+            return False
+        ip = ip.strip()
+        if ip in ("127.0.0.1", "::1", "localhost"):
+            return True
+        if ip.startswith("127."):
+            return True
+        # 可选：允许常用本地私有网段（若以后桥接部署在局域网，可放开）
+        # 192.168/172.16-31/10.
+        return ip.startswith(("192.168.", "10.")) or (
+            ip.startswith("172.16.") or ip.startswith("172.31.")
+        )
+
     async def _start_bridge_listener(self) -> bool:
         if self._bridge_server is not None:
             return True
 
         async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
             peer = writer.get_extra_info("peername")
+            peer_ip = peer[0] if isinstance(peer, tuple) and peer else "?"
+            if not self._is_local_peer(peer_ip):
+                # 仅信任本机回环来源；拒绝公网/异地扫描与伪造连接
+                self.logger.warning(
+                    f"MC 桥接已拒绝非本机来源: {peer} "
+                    f"（仅允许 {self.bridge_host or '127.0.0.1'}）"
+                )
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
+                return
             self.logger.info(f"MC 桥接连接来自: {peer}")
             self._bridge_writers.add(writer)
             try:
@@ -677,7 +710,7 @@ class MinecraftPlugin(Star):
                     if not data:
                         break
                     text = data.decode("utf-8", errors="ignore").strip()
-                    if text:
+                    if text and not self._is_bridge_noise(text):
                         await self._on_bridge_line(text)
             except asyncio.CancelledError:
                 raise
@@ -718,6 +751,31 @@ class MinecraftPlugin(Star):
         except Exception:
             pass
         self.logger.info("MC 聊天桥接监听已停止")
+
+    # 常见网络探测/扫描特征（HTTP 请求行、请求头、协议 banner 等），命中即视为噪音丢弃
+    _BRIDGE_NOISE_RE = (
+        r"(^|\r\n)(HTTP/\d\.\d\b|Host:|User-Agent:|Accept:|Connection:|"
+        r"Accept-Encoding:|Content-Length:|Referer:|GET |POST |OPTIONS |"
+        r"PUT |HEAD |GET /|HEAD /|\* \d|redis-server|SSH-2\.0|220 |"
+        r"220-|250 |EHLO |PING |HELO )"
+    )
+
+    def _is_bridge_noise(self, text: str) -> bool:
+        """识别并过滤不应进入聊天的网络探测/协议噪音。
+
+        旧 TCP 桥接监听曾因绑定 0.0.0.0 被公网扫描器（如 Infrawatch）主动
+        HTTP 探测，Host/User-Agent 等请求头被误当聊天转发进群。这里按特征丢弃。
+        """
+        if not text:
+            return True
+        if len(text) > 500:  # 正常 MC 聊天一行远小于此
+            return True
+        # 控制字符（除 \t\n\r 外）多为恶意/异常载荷
+        if any(c for c in text if c.isascii() and ord(c) < 32 and c not in "\t\n\r"):
+            return True
+        if re.search(self._BRIDGE_NOISE_RE, text, re.IGNORECASE):
+            return True
+        return False
 
     async def _on_bridge_line(self, text: str) -> None:
         if not self.enable_bridge or not self.bridge_mc_to_qq:
