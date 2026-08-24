@@ -6,6 +6,9 @@ Xaunli Spark Bot Minecraft 插件
 
 import asyncio
 import json
+import re
+import socket
+import struct
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -13,6 +16,90 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
+
+
+class _RconClient:
+    """线程安全的极简 RCON 客户端。
+
+    不使用 mcrcon 库：mcrcon 构造/读超时依赖 signal.alarm(SIGALRM)，
+    SIGALRM 仅在主解释器主线程可用；本插件经 asyncio.to_thread 在工作线程
+    调用 RCON，使用 mcrcon 会抛 ValueError，导致所有 RCON 功能失效。
+
+    本实现基于 socket.settimeout，可在任意线程使用。
+    协议参考: https://wiki.vg/RCON
+    """
+
+    _AUTH = 3
+    _AUTH_RESPONSE = 2
+    _EXECCOMMAND = 2
+    _RESPONSE_VALUE = 0
+
+    def __init__(self, host: str, password: str, port: int = 25575, timeout: float = 10):
+        self._request_id = 0
+        self._sock = socket.create_connection((host, port), timeout=timeout)
+        try:
+            self._sock.settimeout(timeout)
+            self._auth(password)
+        except Exception:
+            self.close()
+            raise
+
+    def _send(self, pkt_type: int, payload: str) -> int:
+        self._request_id += 1
+        request_id = self._request_id
+        body = (
+            struct.pack("<ii", request_id, pkt_type)
+            + payload.encode("utf-8")
+            + b"\x00\x00"
+        )
+        self._sock.sendall(struct.pack("<i", len(body)) + body)
+        return request_id
+
+    def _recv_exact(self, size: int) -> bytes:
+        buf = b""
+        while len(buf) < size:
+            chunk = self._sock.recv(size - len(buf))
+            if not chunk:
+                raise ConnectionError("RCON 连接被对端关闭")
+            buf += chunk
+        return buf
+
+    def _recv(self) -> tuple[int, int, str]:
+        (length,) = struct.unpack("<i", self._recv_exact(4))
+        if length < 10 or length > 8192:
+            raise ConnectionError(f"RCON 响应长度异常: {length}")
+        body = self._recv_exact(length)
+        request_id, pkt_type = struct.unpack("<ii", body[:8])
+        return request_id, pkt_type, body[8:-2].decode("utf-8", errors="replace")
+
+    def _auth(self, password: str) -> None:
+        request_id = self._send(self._AUTH, password)
+        # 部分服务端在 AUTH_RESPONSE 前先发一个空 RESPONSE_VALUE，跳过即可
+        while True:
+            rid, pkt_type, _ = self._recv()
+            if pkt_type == self._AUTH_RESPONSE:
+                if rid == -1:
+                    raise PermissionError("RCON 认证失败：密码错误")
+                return
+
+    def command(self, cmd: str) -> str:
+        request_id = self._send(self._EXECCOMMAND, cmd)
+        while True:
+            rid, pkt_type, payload = self._recv()
+            if pkt_type == self._RESPONSE_VALUE and rid == request_id:
+                return payload
+
+    def close(self) -> None:
+        try:
+            self._sock.close()
+        except Exception:
+            pass
+
+    def __enter__(self) -> "_RconClient":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
 
 
 @dataclass
@@ -115,7 +202,7 @@ class MinecraftPlugin(Star):
         return list(self.servers.values())
 
     # ------------------------------------------------------------------
-    # RCON 执行（带连接缓存与线程池）
+    # RCON 执行（线程安全 RCON 客户端）
     # ------------------------------------------------------------------
     async def _rcon_command(self, command: str, server_name: Optional[str] = None) -> str:
         if not self.rcon_enabled:
@@ -128,14 +215,21 @@ class MinecraftPlugin(Star):
         if not srv.password:
             return f"服务器 [{srv.name}] 未配置 RCON 密码"
 
+        # 注入防护：过滤换行，防止用户输入被拆成多条 RCON 命令
+        command = command.replace("\r", " ").replace("\n", " ").strip()
+        if not command:
+            return "（空指令）"
+
         def _sync_rcon():
-            from mcrcon import MCRcon
-            with MCRcon(srv.host, srv.password, srv.port) as mcr:
-                return mcr.command(command)
+            with _RconClient(srv.host, srv.password, srv.port) as rcon:
+                return rcon.command(command)
 
         try:
             result = await asyncio.to_thread(_sync_rcon)
             return result.strip() if result else "（空响应）"
+        except PermissionError as e:
+            logger.error(f"RCON 认证失败 [{srv.name}]: {e}")
+            return f"[{srv.name}] RCON 认证失败，请检查密码"
         except Exception as e:
             logger.error(f"RCON 执行失败 [{srv.name}] [{command}]: {e}")
             return f"[{srv.name}] 连接失败: {e}"
@@ -198,7 +292,12 @@ class MinecraftPlugin(Star):
     async def _get_players(self, server_name: Optional[str] = None) -> str:
         name = server_name or self.default_server
         result = await self._rcon_command("list", name)
-        if not result or "no players" in result.lower() or "can't keep up" in result.lower():
+        if not result or "连接失败" in result or "（空响应）" in result:
+            return f"[{name}] 无法获取玩家列表"
+        # 正确解析在线人数：避免把 "Can't keep up" 等日志误判为空服，
+        # 也兼容不同服务端（原版/Spigot/Paper 均为 "There are N of a max of M"）。
+        m = re.search(r"There are (\d+) of a max of \d+ players online", result, re.IGNORECASE)
+        if m and int(m.group(1)) == 0:
             return f"[{name}] 当前没有在线玩家"
         return f"👥 [{name}] 在线玩家：\n{result}"
 
