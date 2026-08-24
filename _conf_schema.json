@@ -1,0 +1,188 @@
+{
+    "rcon_enabled": {
+        "description": "启用 RCON 连接",
+        "type": "bool",
+        "hint": "是否启用 MC 服务器 RCON 远程控制功能",
+        "default": true
+    },
+    "rcon_host": {
+        "description": "RCON 服务器地址（单服务器模式）",
+        "type": "string",
+        "hint": "Minecraft 服务器 IP 或域名；与下方端口/密码一起构成单服务器配置，servers 列表为空时生效",
+        "default": ""
+    },
+    "rcon_port": {
+        "description": "RCON 端口（单服务器模式）",
+        "type": "int",
+        "hint": "RCON 端口，默认 25575",
+        "default": 25575
+    },
+    "rcon_password": {
+        "description": "RCON 密码（单服务器模式）",
+        "type": "string",
+        "obvious_hint": true,
+        "hint": "在 server.properties 中设置的 rcon.password"
+    },
+    "rcon_timeout": {
+        "description": "RCON 超时时间（秒）",
+        "type": "int",
+        "hint": "连接和指令执行的超时时间",
+        "default": 10
+    },
+    "admin_only_commands": {
+        "description": "仅管理员可执行指令",
+        "type": "bool",
+        "hint": "开启后，/mc 指令只有管理员才能使用",
+        "default": true
+    },
+    "default_server": {
+        "description": "默认服务器名称",
+        "type": "string",
+        "hint": "当使用 /mc 时不指定服务器时的默认目标",
+        "default": ""
+    },
+    "servers": {
+        "description": "多服务器配置（JSON 数组）",
+        "type": "list",
+        "hint": "格式: [{\"name\": \"生存服\", \"host\": \"127.0.0.1\", \"port\": 25575, \"password\": \"密码\"}, ...]",
+        "default": []
+    },
+    "auto_backup": {
+        "description": "启用自动备份",
+        "type": "bool",
+        "hint": "定时执行 save-all 自动备份",
+        "default": false
+    },
+    "backup_interval_minutes": {
+        "description": "自动备份间隔（分钟）",
+        "type": "int",
+        "hint": "自动备份执行的时间间隔",
+        "default": 60
+    },
+    "enable_announce": {
+        "description": "启用自动公告",
+        "type": "bool",
+        "hint": "定时向服务器发送公告消息",
+        "default": false
+    },
+    "announce_interval_minutes": {
+        "description": "公告间隔（分钟）",
+        "type": "int",
+        "hint": "每条公告发送的间隔时间",
+        "default": 30
+    },
+    "announcements": {
+        "description": "公告内容列表",
+        "type": "list",
+        "hint": "自动循环发送的公告内容",
+        "default": []
+    },
+    "enable_monitor": {
+        "description": "启用性能监控",
+        "type": "bool",
+        "hint": "允许使用 /mc monitor 查看 TPS（仅 Paper/Spigot 系服务端支持）",
+        "default": false
+    },
+    "enable_llm_tool": {
+        "description": "启用 AI 自然语言控制",
+        "type": "bool",
+        "hint": "允许使用 /mc ai <自然语言> 让 AI 帮你执行指令",
+        "default": true
+    },
+    "enable_chat_bridge": {
+        "description": "启用 MC -> QQ 聊天桥接",
+        "type": "bool",
+        "hint": "允许 MC 玩家聊天消息转发到 QQ（需要服务端 mod 推送）",
+        "default": false
+    },
+    "bridge_mc_to_qq": {
+        "description": "MC -> QQ 转发",
+        "type": "bool",
+        "hint": "允许 MC 玩家聊天消息转发到 QQ 群（需要服务端 mod 推送）",
+        "default": true
+    },
+    "bridge_listen_host": {
+        "description": "桥接 TCP 监听地址",
+        "type": "string",
+        "hint": "MC 服务端 mod 连接的本地地址",
+        "default": "127.0.0.1"
+    },
+    "bridge_listen_port": {
+        "description": "桥接 TCP 监听端口",
+        "type": "int",
+        "hint": "MC 服务端 mod 连接的本地端口，默认 25576",
+        "default": 25576
+    },
+    "bridge_target_session": {
+        "description": "桥接转发目标会话",
+        "type": "string",
+        "hint": "unified_msg_origin 格式，如 aiocqhttp:group:123456；留空则使用最近一次 /mc bridge on 所在的会话",
+        "default": ""
+    },
+    "bridge_format_mc": {
+        "description": "MC -> QQ 消息格式",
+        "type": "text",
+        "hint": "可用变量: {player}, {msg}",
+        "default": "[MC]{player}: {msg}"
+    },
+    "queqiao_enabled": {
+        "description": "启用鹊桥（QueQiao）mod 对接",
+        "type": "bool",
+        "hint": "通过 WebSocket 连接 MC 服务端的鹊桥 mod，实现双向聊天/事件转发；需在 MC 端安装鹊桥 mod 并启用其 WebSocket Server",
+        "default": false
+    },
+    "queqiao_ws_url": {
+        "description": "鹊桥 WebSocket 地址",
+        "type": "string",
+        "hint": "形如 ws://192.168.5.63:8080 ；对应鹊桥 config.yml 的 websocket_server.host/port",
+        "default": ""
+    },
+    "queqiao_token": {
+        "description": "鹊桥 access_token",
+        "type": "string",
+        "obvious_hint": true,
+        "hint": "对应鹊桥 config.yml 的 access_token，用于连接鉴权"
+    },
+    "queqiao_server_name": {
+        "description": "鹊桥 server_name",
+        "type": "string",
+        "hint": "对应鹊桥 config.yml 的 server_name，连接时通过 x-self-name 头校验",
+        "default": ""
+    },
+    "bridge_qq_to_mc": {
+        "description": "QQ -> MC 转发",
+        "type": "bool",
+        "hint": "把绑定群里的普通消息（非命令）通过鹊桥 broadcast 送进游戏",
+        "default": true
+    },
+    "bridge_format_qq": {
+        "description": "QQ -> MC 消息格式",
+        "type": "text",
+        "hint": "可用变量: {sender}, {msg}",
+        "default": "[QQ]{sender}: {msg}"
+    },
+    "bridge_notify_join_quit": {
+        "description": "转发玩家加入/退出通知",
+        "type": "bool",
+        "hint": "玩家进退服时向 QQ 群发送通知（依赖鹊桥）",
+        "default": true
+    },
+    "bridge_notify_death": {
+        "description": "转发玩家死亡通知",
+        "type": "bool",
+        "hint": "玩家死亡时向 QQ 群发送通知（依赖鹊桥）",
+        "default": true
+    },
+    "enable_player_tracker": {
+        "description": "启用玩家加入/离开追踪",
+        "type": "bool",
+        "hint": "后台轮询在线玩家并记录加入/离开日志；默认关闭以避免对离线服务器高频轮询",
+        "default": false
+    },
+    "player_tracker_interval": {
+        "description": "玩家追踪轮询间隔（秒）",
+        "type": "int",
+        "hint": "最小 10 秒；服务器连续 3 次 RCON 失败后自动跳过轮询",
+        "default": 30
+    }
+}

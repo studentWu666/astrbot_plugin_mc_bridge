@@ -1,0 +1,33 @@
+name: "astrbot_plugin_mc_bridge"
+display_name: "Minecraft 服务器管理 & 聊天桥接"
+short_desc: "通过 RCON 管理 Minecraft 服务器，并实现 MC 与 QQ 双向聊天桥接。"
+desc: |
+  AstrBot Minecraft 插件，通过 RCON 协议连接 Minecraft 服务器，提供多服务器管理、
+  AI 自然语言控制、定时备份公告、性能监控与玩家管理；并内置鹊桥（QueQiao）mod 对接，
+  实现 MC 与 QQ 群之间的双向聊天、进服/退服、死亡等事件转发。
+
+  主要特性：
+  - 多服务器管理：RCON 连接多个服务器、切换默认服、白名单/封禁/踢人/OP 管理
+  - AI 控制：/mc ai <自然语言> 让 AI 自动翻译并执行服务端指令；LLM 工具 mc_rcon_command
+  - 定时任务：自动备份（save-all）、循环公告、性能监控播报
+  - 聊天桥接：鹊桥（QueQiao）mod WebSocket 对接，MC 与 QQ 双向聊天/事件转发
+  - 静默模式：/mc silent 定时关闭 MC->QQ 转发，静默期消息缓存并在结束后回放
+  - 安全加固：内置线程安全 RCON 客户端（不依赖 mcrcon）、指令换行注入过滤、管理员权限校验
+author: "studentWu666"
+version: 2.3.1
+repo: "https://github.com/studentWu666/astrbot_plugin_mc_bridge"
+social_link: "https://github.com/studentWu666"
+license: "AGPL-3.0"
+
+astrbot_version: ">=4.16,<5"
+support_platforms:
+  - aiocqhttp
+  - telegram
+  - discord
+
+tags:
+  - minecraft
+  - rcon
+  - qq
+  - bridge
+  - 游戏
