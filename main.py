@@ -430,7 +430,14 @@ class MinecraftPlugin(Star):
         self._msg_count: int = 0                               # 累计聊天消息数（仅聊天）
         self._tps_samples: list[float] = []                    # 定时采样得到的 TPS 值列表
         self._silent_stats_sent: bool = False                  # 本次静默的统计是否已播报
+
+        # 玩家每日在线时长统计（用 join/quit 事件计算）
         self._plugin_dir = os.path.dirname(os.path.abspath(__file__))
+        self._playtime_sessions: dict[str, datetime] = {}      # 在线中：玩家 -> 加入时间
+        self._playtime_daily: dict[str, dict[str, int]] = {}   # 日期 -> {玩家: 累计秒数}
+        self._playtime_path = os.path.join(self._plugin_dir, "playtime_state.json")
+        self._load_playtime_state()
+
         self._silent_state_path = os.path.join(self._plugin_dir, "silent_state.json")
         self._load_silent_state()
 
@@ -944,6 +951,7 @@ class MinecraftPlugin(Star):
             if not self.bridge_notify_join_quit:
                 return
             is_join = sub_type in ("join", "player_join")
+            self._record_playtime(name, is_join, datetime.now())
             icon = "🟢" if is_join else "🔴"
             verb = "加入了服务器" if is_join else "退出了服务器"
             text = f"{icon} {name} {verb}"
@@ -970,6 +978,7 @@ class MinecraftPlugin(Star):
             if not self.bridge_notify_join_quit:
                 return
             is_join = event_name in ("player_join", "join")
+            self._record_playtime(name, is_join, datetime.now())
             icon = "🟢" if is_join else "🔴"
             verb = "加入了服务器" if is_join else "退出了服务器"
             text = f"{icon} {name} {verb}"
@@ -1101,6 +1110,7 @@ class MinecraftPlugin(Star):
         "batch": "_batch",
         "bridge": "_bridge",
         "silent": "_silent",
+        "playtime": "_playtime",
         "status": "_status",
         "players": "_players",
         "list": "_players",
@@ -1133,7 +1143,7 @@ class MinecraftPlugin(Star):
             return
         # 这些子指令不依赖 RCON 连接，不应被 RCON 开关/服务器配置拦截
         action = (action or "help").strip().lower()
-        if action not in ("help", "servers", "use", "bridge", "silent"):
+        if action not in ("help", "servers", "use", "bridge", "silent", "playtime"):
             if not self.rcon_enabled:
                 yield event.plain_result("RCON 功能未启用，请在插件设置中开启")
                 return
@@ -1162,6 +1172,7 @@ class MinecraftPlugin(Star):
             "  status              - 查看综合状态\n"
             "  players / list      - 在线玩家\n"
             "  monitor             - 性能监控 (TPS，需 Paper 系服务端)\n"
+            "  playtime [玩家]      - 玩家在线时长（默认当日全部）\n"
             "  version             - 服务器版本\n"
             "  servers             - 列出所有配置的服务器\n"
             "  use <服务器名>       - 切换默认服务器\n"
@@ -1242,6 +1253,81 @@ class MinecraftPlugin(Star):
                 json.dump({"schedule": sched}, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self.logger.warning(f"静默时段状态保存失败: {e}")
+
+    def _load_playtime_state(self) -> None:
+        """加载玩家每日在线时长缓存（供重启后继续累计）。"""
+        try:
+            with open(self._playtime_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            daily = data.get("daily")
+            if isinstance(daily, dict):
+                self._playtime_daily = {
+                    str(d): {str(k): int(v) for k, v in dd.items() if isinstance(v, (int, float))}
+                    for d, dd in daily.items() if isinstance(dd, dict)
+                }
+        except Exception:
+            self._playtime_daily = {}
+
+    def _save_playtime_state(self) -> None:
+        """持久化玩家每日在线时长。"""
+        try:
+            with open(self._playtime_path, "w", encoding="utf-8") as f:
+                json.dump({"daily": self._playtime_daily}, f, ensure_ascii=False)
+        except Exception as e:
+            self.logger.warning(f"玩家在线时长保存失败: {e}")
+
+    def _record_playtime(self, name: str, is_join: bool, now: datetime) -> None:
+        """用 join/quit 事件更新玩家在线时长。join 记开始时间，quit 结算并累加到当日。"""
+        if not name or name == "未知玩家":
+            return
+        if is_join:
+            self._playtime_sessions[name] = now
+        else:
+            joined = self._playtime_sessions.pop(name, None)
+            if joined is None:
+                return  # 无对应 join 记录（如重启后首条 quit），无法计算
+            secs = int((now - joined).total_seconds())
+            if secs < 0:
+                return
+            day = now.strftime("%Y-%m-%d")
+            self._playtime_daily.setdefault(day, {})[name] = (
+                self._playtime_daily.setdefault(day, {}).get(name, 0) + secs
+            )
+            self._save_playtime_state()
+
+    @staticmethod
+    def _fmt_playtime(secs: int) -> str:
+        """秒 -> 人类可读时长（如 1小时23分 / 45分 / 30秒）。"""
+        if secs < 0:
+            secs = 0
+        h, rem = divmod(secs, 3600)
+        m, s = divmod(rem, 60)
+        parts = []
+        if h:
+            parts.append(f"{h}小时")
+        if m:
+            parts.append(f"{m}分")
+        if s or not parts:
+            parts.append(f"{s}秒")
+        return "".join(parts)
+
+    def _daily_playtime_text(self, day: Optional[str] = None) -> str:
+        """生成某天的玩家在线时长汇总文本（默认今天）。"""
+        if day is None:
+            day = datetime.now().strftime("%Y-%m-%d")
+        dd = self._playtime_daily.get(day, {})
+        if not dd:
+            return f"📊 {day} 暂无玩家在线时长记录"
+        # 加上仍未下线玩家的实时时长
+        live = self._playtime_sessions
+        lines = [f"📊 {day} 玩家在线时长："]
+        for player in sorted(set(list(dd.keys()) + list(live.keys()))):
+            secs = dd.get(player, 0)
+            jt = live.get(player)
+            if jt:
+                secs += int((datetime.now() - jt).total_seconds())
+            lines.append(f"  • {player}: {self._fmt_playtime(secs)}")
+        return "\n".join(lines)
 
     @staticmethod
     def _parse_duration(s: str) -> Optional[timedelta]:
@@ -1414,6 +1500,11 @@ class MinecraftPlugin(Star):
         ]
         if self._tps_samples:
             lines.append(f"  （基于 {len(self._tps_samples)} 次采样）")
+        # 附带当日玩家在线时长
+        day = datetime.now().strftime("%Y-%m-%d")
+        pt = self._daily_playtime_text(day)
+        if "\n" in pt:
+            lines = pt.splitlines() + [""] + lines
         try:
             await self.context.send_message(target, MessageChain([Plain("\n".join(lines))]))
         except Exception as e:
@@ -1422,6 +1513,30 @@ class MinecraftPlugin(Star):
         # 播报后清零，作为下一周期起点
         self._msg_count = 0
         self._tps_samples = []
+
+    async def _playtime(self, event: AstrMessageEvent, parts: list[str]) -> str:
+        """查询玩家在线时长：/mc playtime [玩家] ；不带参数则列出当日全部玩家。"""
+        if parts:
+            # 指定玩家：查询其历史每天的在线时长（默认显示今天）
+            player = " ".join(parts).strip()
+            lines = [f"⏱ {player} 在线时长："]
+            found = False
+            for day in sorted(self._playtime_daily.keys(), reverse=True):
+                secs = self._playtime_daily[day].get(player)
+                if secs is not None:
+                    lines.append(f"  • {day}: {self._fmt_playtime(secs)}")
+                    found = True
+            # 若当前在线，额外显示实时时长
+            jt = self._playtime_sessions.get(player)
+            if jt:
+                cur = int((datetime.now() - jt).total_seconds())
+                lines.append(f"  • 当前已在线: {self._fmt_playtime(cur)}")
+                found = True
+            if not found:
+                return f"没有找到 {player} 的在线时长记录"
+            return "\n".join(lines)
+        # 不带参数：当日全部玩家汇总
+        return self._daily_playtime_text()
 
     async def _silent(self, event: AstrMessageEvent, parts: list[str]) -> str:
         if not parts:
