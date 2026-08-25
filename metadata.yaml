@@ -14,7 +14,7 @@ desc: |
   - 静默模式：/mc silent 定时关闭 MC->QQ 转发，静默期消息缓存并在结束后回放
   - 安全加固：内置线程安全 RCON 客户端（不依赖 mcrcon）、指令换行注入过滤、管理员权限校验
 author: "studentWu666"
-version: 2.3.1
+version: 2.3.2
 repo: "https://github.com/studentWu666/astrbot_plugin_mc_bridge"
 social_link: "https://github.com/studentWu666"
 license: "AGPL-3.0"
