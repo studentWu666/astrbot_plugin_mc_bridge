@@ -83,6 +83,12 @@
         "hint": "允许使用 /mc monitor 查看 TPS（仅 Paper/Spigot 系服务端支持）",
         "default": false
     },
+    "tps_sample_interval_minutes": {
+        "description": "TPS 采样间隔（分钟）",
+        "type": "int",
+        "hint": "静默开始统计用：每 N 分钟采样一次 TPS 并求平均；需启用「性能监控」；填 0 或留空则为默认 10 分钟",
+        "default": 10
+    },
     "enable_llm_tool": {
         "description": "启用 AI 自然语言控制",
         "type": "bool",
