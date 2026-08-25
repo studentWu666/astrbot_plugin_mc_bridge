@@ -1047,6 +1047,30 @@ class MinecraftPlugin(Star):
                     pass
 
     @staticmethod
+    def _is_command_message(msg: str) -> bool:
+        """识别消息是否为命令形态（应整条过滤，不转发进游戏）。
+
+        覆盖两类：
+        1. 以命令前缀开头的消息：/、！、!、\、.、全角斜杠／ 、全角波浪～ 等
+        2. 命令正文形态：如 "/mc status" 前缀被剥离后残留的 "mc status"，或
+           "mc playtime" 这类直接以插件主命令字开头、且首词是已知子指令的消息
+        """
+        if not msg:
+            return True
+        s = msg.lstrip()
+        # 1) 常见命令前缀（含全角变体）
+        if s[:1] in ("/", "\\", ".", "!", "！", "／", "・", "~", "～", "'", "`", "-"):
+            return True
+        # 2) 命令正文：拆第一个词判断是否插件命令族
+        first = s.split(None, 1)[0].lower() if s.split(None, 1) else s.lower()
+        # 以 mc 开头（/mc 命令族），或首词本身就是已知子指令（前缀被剥离情形）
+        if first in MinecraftPlugin._ACTIONS:
+            return True
+        if first in ("mc", "mcd"):
+            return True
+        return False
+
+    @staticmethod
     def _session_group_id(origin: str) -> str:
         """从 unified_msg_origin（如 'ST ED:GroupMessage:785925006'）提取群号末段。"""
         if not origin:
@@ -1082,9 +1106,8 @@ class MinecraftPlugin(Star):
         msg = event.message_str.strip()
         if not msg:
             return
-        # 命令与唤醒消息不转发
-        low = msg.lstrip()
-        if low.startswith(("/", "！", "!", "\\", ".")):
+        # 命令与唤醒消息不转发（识别 /mc 等命令形态，整条过滤）
+        if self._is_command_message(msg):
             return
         sender = event.get_sender_name() or "QQ用户"
         try:
