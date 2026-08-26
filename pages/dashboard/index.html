@@ -144,6 +144,7 @@
         setText('m-online', `${d.online_count} / ${d.online ? d.online.length : 0}`);
         setText('m-msg', d.msg_count);
         renderTop(d.playtime_top || []);
+        setConn(true, '已连接');
       } catch (e) { setText('m-server', '加载失败'); }
     }
 
