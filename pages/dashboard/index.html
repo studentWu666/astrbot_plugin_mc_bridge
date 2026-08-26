@@ -3,68 +3,113 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MC 服务器管理面板</title>
+  <title>Minecraft 服务器管理</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topbar">
-    <h1>MC 服务器管理面板</h1>
-    <span class="conn" id="conn">连接中…</span>
+    <div class="brand">
+      <span class="brand-mark">⬢</span>
+      <div>
+        <h1>Minecraft 服务器管理</h1>
+        <p class="brand-sub">RCON · 聊天桥接 · 静默调度</p>
+      </div>
+    </div>
+    <div class="conn-pill" id="conn">
+      <span class="dot"></span>
+      <span class="conn-text">连接中</span>
+    </div>
   </header>
 
   <main>
-    <section class="card" id="overview">
-      <h2>服务器总览</h2>
-      <div class="grid">
-        <div class="metric"><label>默认服务器</label><b id="m-server">—</b></div>
-        <div class="metric"><label>当前 TPS</label><b id="m-tps">—</b></div>
+    <section class="card accent" id="overview">
+      <div class="card-head">
+        <h2><span class="ico">▣</span> 服务器总览</h2>
+        <button class="btn ghost" id="btn-refresh">刷新</button>
       </div>
-      <div class="block">
-        <h3>状态</h3>
+      <div class="kpis">
+        <div class="kpi">
+          <span class="kpi-label">默认服务器</span>
+          <span class="kpi-value" id="m-server">—</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi-label">当前 TPS</span>
+          <span class="kpi-value good" id="m-tps">—</span>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">服务器状态</div>
         <pre id="p-status" class="mono">—</pre>
       </div>
-      <div class="block">
-        <h3>在线玩家</h3>
+      <div class="panel">
+        <div class="panel-title">在线玩家</div>
         <pre id="p-players" class="mono">—</pre>
       </div>
-      <button id="btn-refresh">刷新</button>
     </section>
 
     <section class="card" id="playtime">
-      <h2>玩家在线时长</h2>
-      <button id="btn-playtime" class="ghost">刷新今日</button>
+      <div class="card-head">
+        <h2><span class="ico">⏱</span> 玩家在线时长</h2>
+        <button class="btn ghost" id="btn-playtime">刷新今日</button>
+      </div>
       <pre id="p-playtime" class="mono">—</pre>
     </section>
 
     <section class="card" id="stats">
-      <h2>静默统计</h2>
-      <button id="btn-stats" class="ghost">刷新统计</button>
-      <div class="grid">
-        <div class="metric"><label>静默中</label><b id="m-silent">—</b></div>
-        <div class="metric"><label>累计消息</label><b id="m-msg">—</b></div>
-        <div class="metric"><label>TPS 样本</label><b id="m-smp">—</b></div>
-        <div class="metric"><label>均值 TPS</label><b id="m-avg">—</b></div>
+      <div class="card-head">
+        <h2><span class="ico">📈</span> 静默统计</h2>
+        <button class="btn ghost" id="btn-stats">刷新统计</button>
+      </div>
+      <div class="kpis three">
+        <div class="kpi">
+          <span class="kpi-label">静默中</span>
+          <span class="kpi-value" id="m-silent">—</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi-label">累计消息</span>
+          <span class="kpi-value" id="m-msg">—</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi-label">TPS 样本</span>
+          <span class="kpi-value" id="m-smp">—</span>
+        </div>
+        <div class="kpi">
+          <span class="kpi-label">均值 TPS</span>
+          <span class="kpi-value" id="m-avg">—</span>
+        </div>
       </div>
       <pre id="p-status2" class="mono">—</pre>
     </section>
 
     <section class="card" id="config">
-      <h2>配置</h2>
-      <label>桥接转发目标会话</label>
-      <input id="c-target" type="text" placeholder="aiocqhttp:group:123456">
-      <label>默认服务器</label>
-      <input id="c-server" type="text" placeholder="default">
-      <label>TPS 采样间隔（分钟）</label>
-      <input id="c-tpsint" type="number" min="1">
-      <button id="btn-save">保存配置</button>
-      <span class="msg" id="cfg-msg"></span>
+      <div class="card-head">
+        <h2><span class="ico">⚙</span> 配置</h2>
+      </div>
+      <div class="field">
+        <label>桥接转发目标会话</label>
+        <input id="c-target" type="text" placeholder="aiocqhttp:group:123456">
+      </div>
+      <div class="field">
+        <label>默认服务器</label>
+        <input id="c-server" type="text" placeholder="default">
+      </div>
+      <div class="field">
+        <label>TPS 采样间隔（分钟）</label>
+        <input id="c-tpsint" type="number" min="1" placeholder="10">
+      </div>
+      <div class="field-actions">
+        <button class="btn" id="btn-save">保存配置</button>
+        <span class="msg" id="cfg-msg"></span>
+      </div>
     </section>
 
     <section class="card" id="command">
-      <h2>执行 MC 指令</h2>
+      <div class="card-head">
+        <h2><span class="ico">⌨</span> 执行 MC 指令</h2>
+      </div>
       <div class="cmdrow">
         <input id="cmd-input" type="text" placeholder="如 list / time set day">
-        <button id="btn-cmd">发送</button>
+        <button class="btn" id="btn-cmd">发送</button>
       </div>
       <pre id="cmd-out" class="mono">—</pre>
     </section>
@@ -73,13 +118,22 @@
   <script>
     let bridge = null;
     const $ = (id) => document.getElementById(id);
-    function setText(id, v) { $(id).textContent = v == null || v === '' ? '—' : v; }
+    function setText(id, v, hasStat) { $(id).textContent = v == null || v === '' ? '—' : v; setBadge(id, hasStat); }
+
+    function setBadge(id, hasStat) {
+      const el = $(id);
+      if (el.classList.contains('good')) el.classList.remove('good');
+      if (el.classList.contains('warn')) el.classList.remove('warn');
+      if (hasStat === undefined) return;
+      if (hasStat) el.classList.add('good');
+    }
 
     async function loadOverview() {
       try {
         const d = await bridge.apiGet('overview');
         setText('m-server', d.server);
-        setText('m-tps', d.tps != null ? d.tps.toFixed(1) : '无/未启用');
+        const tps = d.tps;
+        setText('m-tps', tps != null ? tps.toFixed(1) : '未启用', tps != null);
         setText('p-status', d.status);
         setText('p-players', d.players);
       } catch (e) { setText('p-status', '加载失败: ' + e); }
@@ -93,10 +147,10 @@
     async function loadStats() {
       try {
         const d = await bridge.apiGet('stats');
-        setText('m-silent', d.silent ? '是' : '否');
+        setText('m-silent', d.silent ? '是' : '否', d.silent);
         setText('m-msg', d.msg_count);
         setText('m-smp', d.tps_samples);
-        setText('m-avg', d.avg_tps != null ? d.avg_tps : '—');
+        setText('m-avg', d.avg_tps != null ? d.avg_tps : '—', d.avg_tps != null);
         setText('p-status2', d.silent_status);
       } catch (e) { setText('p-status2', '加载失败: ' + e); }
     }
@@ -115,12 +169,14 @@
           default_server: $('c-server').value,
           tps_interval: parseInt($('c-tpsint').value, 10) || 10,
         });
-        $('cfg-msg').textContent = r.saved ? '已保存: ' + r.updated.join(', ') : '保存失败';
-      } catch (e) { $('cfg-msg').textContent = '保存失败: ' + e; }
+        $('cfg-msg').textContent = r.saved ? '✓ 已保存' : '保存失败';
+        $('cfg-msg').className = r.saved ? 'msg ok' : 'msg err';
+      } catch (e) { $('cfg-msg').textContent = '保存失败: ' + e; $('cfg-msg').className = 'msg err'; }
     }
     async function sendCommand() {
       const cmd = $('cmd-input').value.trim();
       if (!cmd) return;
+      $('cmd-out').textContent = '执行中…';
       try {
         const r = await bridge.apiPost('command', { command: cmd });
         $('cmd-out').textContent = r.result || '（无输出）';
@@ -136,18 +192,25 @@
       return false;
     }
 
+    function setConn(ok, text) {
+      const pill = $('conn');
+      pill.classList.toggle('ok', ok);
+      pill.classList.toggle('err', !ok);
+      pill.querySelector('.conn-text').textContent = text;
+    }
+
     async function init() {
       const ok = await waitBridge();
-      if (!ok) { setText('conn', 'bridge 失败'); return; }
-      try { await bridge.ready(); setText('conn', '已连接'); } catch (e) { setText('conn', 'ready 失败: ' + e); }
+      setConn(ok, ok ? '已连接' : '连接失败');
+      if (ok) { try { await bridge.ready(); } catch (e) { setConn(false, '桥接异常'); return; } }
       loadOverview(); loadPlaytime(); loadStats(); loadConfig();
     }
-    document.getElementById('btn-refresh').onclick = loadOverview;
-    document.getElementById('btn-playtime').onclick = loadPlaytime;
-    document.getElementById('btn-stats').onclick = loadStats;
-    document.getElementById('btn-save').onclick = saveConfig;
-    document.getElementById('btn-cmd').onclick = sendCommand;
-    document.getElementById('cmd-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendCommand(); });
+    $('btn-refresh').onclick = loadOverview;
+    $('btn-playtime').onclick = loadPlaytime;
+    $('btn-stats').onclick = loadStats;
+    $('btn-save').onclick = saveConfig;
+    $('btn-cmd').onclick = sendCommand;
+    $('cmd-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendCommand(); });
     init();
   </script>
 </body>
