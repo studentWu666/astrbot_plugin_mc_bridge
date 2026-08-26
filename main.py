@@ -44,6 +44,7 @@ import aiohttp
 from astrbot.api.event import filter, AstrMessageEvent, MessageChain
 from astrbot.api.message_components import Plain
 from astrbot.api.star import Context, Star
+from astrbot.api.web import json_response, error_response, request
 from astrbot.core.star.filter.command import GreedyStr
 
 DEFAULT_TIMEOUT = 10
@@ -1908,8 +1909,141 @@ class MinecraftPlugin(Star):
     # ------------------------------------------------------------------
     # 生命周期
     # ------------------------------------------------------------------
+    def _register_web_apis(self) -> None:
+        """注册插件 WebUI 后端 API（路由以插件名作前缀）。"""
+        pfx = "astrbot_plugin_mc_bridge"
+        self.context.register_web_api(
+            f"/{pfx}/overview", self._web_overview, ["GET"], "服务器总览（状态/玩家/TPS/默认服）"
+        )
+        self.context.register_web_api(
+            f"/{pfx}/players", self._web_players, ["GET"], "在线玩家列表"
+        )
+        self.context.register_web_api(
+            f"/{pfx}/playtime", self._web_playtime, ["GET"], "玩家每日在线时长"
+        )
+        self.context.register_web_api(
+            f"/{pfx}/stats", self._web_stats, ["GET"], "静默统计与消息数"
+        )
+        self.context.register_web_api(
+            f"/{pfx}/config", self._web_config_get, ["GET"], "读取配置"
+        )
+        self.context.register_web_api(
+            f"/{pfx}/config", self._web_config_set, ["POST"], "保存配置"
+        )
+        self.context.register_web_api(
+            f"/{pfx}/command", self._web_command, ["POST"], "执行 MC 指令（需管理员）"
+        )
+
+    async def _web_overview(self):
+        """仪表盘总览：服务器状态 + 在线玩家 + TPS + 默认服务器。"""
+        try:
+            status = await self._get_status()
+            players = await self._get_players()
+            name = self.default_server or "无"
+            tps = await self._get_tps_value()
+            return json_response({
+                "server": name,
+                "status": status,
+                "players": players,
+                "tps": tps,
+            })
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_players(self):
+        """在线玩家列表。"""
+        try:
+            players = await self._players_online(self.default_server)
+            return json_response({"players": sorted(players)})
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_playtime(self):
+        """每日在线时长（默认今日，可选 ?day=YYYY-MM-DD）。"""
+        day = request.query.get("day", "", str)
+        try:
+            text = self._daily_playtime_text(day or None)
+            return json_response({"day": day or datetime.now().strftime("%Y-%m-%d"), "text": text})
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_stats(self):
+        """静默统计：当前累计消息数 + TPS 样本均值 + 今日在线时长简表。"""
+        try:
+            avg = (sum(self._tps_samples) / len(self._tps_samples)) if self._tps_samples else None
+            return json_response({
+                "msg_count": self._msg_count,
+                "tps_samples": len(self._tps_samples),
+                "avg_tps": round(avg, 2) if avg is not None else None,
+                "silent": self._is_silent(),
+                "silent_status": self._silent_status(),
+            })
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_config_get(self):
+        """读取可编辑配置（不暴露 RCON 密码明文）。"""
+        try:
+            cfg = self.config
+            return json_response({
+                "bridge_target": self.bridge_target_session or "",
+                "bridge_enabled": self.enable_bridge,
+                "monitor_enabled": self.enable_monitor,
+                "tps_interval": _safe_int(cfg.get("tps_sample_interval_minutes"), 10),
+                "default_server": self.default_server or "",
+                "rcon_host": cfg.get("rcon_host", ""),
+                "rcon_port": _safe_int(cfg.get("rcon_port"), 25575),
+            })
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_config_set(self):
+        """保存可编辑配置（仅保存非敏感字段）。"""
+        try:
+            payload = await request.json(default={})
+            if not isinstance(payload, dict):
+                return error_response("参数必须是 JSON 对象")
+            upd = {}
+            if "bridge_target" in payload:
+                self.bridge_target_session = str(payload["bridge_target"])
+                upd["bridge_target_session"] = self.bridge_target_session
+            if "default_server" in payload:
+                ns = str(payload["default_server"])
+                if ns in self.servers or not ns:
+                    self.default_server = ns
+                    upd["default_server"] = ns
+            if "tps_interval" in payload:
+                v = _safe_int(payload["tps_interval"], 10)
+                upd["tps_sample_interval_minutes"] = max(1, v)
+            self.config.update(upd)
+            return json_response({"saved": True, "updated": list(upd.keys())})
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_command(self):
+        """执行 MC 指令：需已登录为管理员，直接走 RCON。"""
+        try:
+            username = request.username
+            if self.admin_only and not username:
+                return error_response("仅管理员可执行，请先登录 AstrBot Dashboard")
+            payload = await request.json(default={})
+            if not isinstance(payload, dict):
+                return error_response("参数必须是 JSON 对象")
+            cmd = str(payload.get("command") or "").strip()
+            if not cmd:
+                return error_response("command 不能为空")
+            # 防止注入换行，与 _rcon 一致
+            srv, err = self._rcon_ready()
+            if srv is None:
+                return error_response(err)
+            out = await self._rcon(cmd)
+            return json_response({"result": out or ""})
+        except Exception as e:
+            return error_response(str(e))
+
     async def initialize(self) -> None:
         """插件激活时按需启动后台任务。"""
+        self._register_web_apis()
         if self.auto_backup and self.backup_interval > 0:
             self._spawn(self._backup_loop())
         if self.enable_announce and self.announcements and self.announce_interval > 0:
