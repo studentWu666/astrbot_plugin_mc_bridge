@@ -71,7 +71,7 @@
   </main>
 
   <script>
-    const bridge = window.AstrBotPluginPage;
+    let bridge = null;
     const $ = (id) => document.getElementById(id);
     function setText(id, v) { $(id).textContent = v == null || v === '' ? '—' : v; }
 
@@ -127,8 +127,19 @@
       } catch (e) { $('cmd-out').textContent = '失败: ' + e; }
     }
 
+    async function waitBridge(timeoutMs = 8000) {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        if (window.AstrBotPluginPage) { bridge = window.AstrBotPluginPage; return true; }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return false;
+    }
+
     async function init() {
-      try { await bridge.ready(); setText('conn', '已连接'); } catch (e) { setText('conn', '连接失败'); }
+      const ok = await waitBridge();
+      if (!ok) { setText('conn', 'bridge 失败'); return; }
+      try { await bridge.ready(); setText('conn', '已连接'); } catch (e) { setText('conn', 'ready 失败: ' + e); }
       loadOverview(); loadPlaytime(); loadStats(); loadConfig();
     }
     document.getElementById('btn-refresh').onclick = loadOverview;
