@@ -1432,7 +1432,11 @@ class MinecraftPlugin(Star):
             self._silent_buffer.pop(0)  # 极端情况下防止无限增长
 
     async def _flush_silent_buffer(self) -> None:
-        """把静默期间缓存的动态以聊天记录形式一次性回放到转发目标。"""
+        """静默结束后只向转发目标报一条汇总：静默期间共收到 N 条 + 时间段。
+
+        不逐条回放具体聊天内容（避免把静默期的一长串聊天一股脑发进群），
+        仅告知统计数量与跨度。具体明细不对外发送。
+        """
         if not self._silent_buffer:
             return
         target = self._bridge_target or self.bridge_target_session
@@ -1442,16 +1446,12 @@ class MinecraftPlugin(Star):
             self.logger.info("静默缓冲因无转发目标而丢弃")
             return
         first, last = entries[0]["ts"], entries[-1]["ts"]
-        lines = [
-            f"📥 静默期间收集的动态（共 {len(entries)} 条，"
-            f"{first.strftime('%H:%M')}-{last.strftime('%H:%M')}）："
-        ]
-        for e in entries:
-            lines.append(f"[{e['ts'].strftime('%H:%M:%S')}] {e['text']}")
+        content = f"📥 静默期间共收到 {len(entries)} 条动态" \
+                  f"（{first.strftime('%H:%M')}-{last.strftime('%H:%M')}），已按静默处理"
         try:
-            await self.context.send_message(target, MessageChain([Plain("\n".join(lines))]))
+            await self.context.send_message(target, MessageChain([Plain(content)]))
         except Exception as e:
-            self.logger.error(f"静默缓冲回放失败: {e}")
+            self.logger.error(f"静默缓冲汇总发送失败: {e}")
 
     def _is_silent(self) -> bool:
         now = datetime.now()
