@@ -279,13 +279,18 @@
     }
 
     async function init() {
-      const ok = await waitBridge();
+      // SDK 若已注入则立即就绪，否则轮询等待；避免 8s 超时导致连接状态延迟
+      const ok = !!window.AstrBotPluginPage || (await waitBridge());
       setConn(ok, ok ? '已连接' : '连接失败');
       if (ok) {
-        // ready() 依赖父页面注入 context，可能不 resolve；用超时抢跑，不阻塞数据加载
-        try { await Promise.race([window.AstrBotPluginPage.ready(), new Promise(r => setTimeout(r, 1500))]); } catch (e) {}
+        try { await Promise.race([window.AstrBotPluginPage.ready(), new Promise(r => setTimeout(r, 800))]); } catch (e) {}
       }
       loadOverview(); loadServers(); loadPlayers(); loadTps(); loadConfig(); loadSilent();
+      // 二次兜底：数据接口若可调用，说明 bridge 已可用，强制置为已连接
+      try {
+        await window.AstrBotPluginPage.apiGet('players');
+        setConn(true, '已连接');
+      } catch (e) {}
     }
 
     $('#btn-refresh').onclick = () => { loadOverview(); loadServers(); loadPlayers(); loadTps(); };
