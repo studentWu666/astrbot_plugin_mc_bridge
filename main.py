@@ -546,7 +546,7 @@ class MinecraftPlugin(Star):
     # ------------------------------------------------------------------
     # list 输出解析
     # ------------------------------------------------------------------
-    _LIST_RE = re.compile(r"There are (\d+) of a max of \d+ players online", re.IGNORECASE)
+    _LIST_RE = re.compile(r"There are (\d+) of a max of (\d+) players online", re.IGNORECASE)
 
     async def _players_online(self, server_name: str) -> set[str]:
         """解析 ``list`` 输出中的在线玩家名集合。
@@ -567,6 +567,20 @@ class MinecraftPlugin(Star):
             tail = resp.rsplit(":", 1)[1]
             return {n.strip() for n in tail.split(",") if n.strip()}
         return set()
+
+    async def _list_info(self, server_name: str) -> tuple[set[str], int]:
+        """返回 (在线玩家集合, 最大人数)。与 _players_online 同源，额外给出 max。"""
+        resp = await self._rcon("list", server_name)
+        if "连接失败" in resp or resp in ("（空响应）", "（空指令）"):
+            return set(), 0
+        m = self._LIST_RE.search(resp)
+        maxp = int(m.group(2)) if m else 0
+        if m and int(m.group(1)) == 0:
+            return set(), maxp
+        if ":" in resp:
+            tail = resp.rsplit(":", 1)[1]
+            return ({n.strip() for n in tail.split(",") if n.strip()}, maxp)
+        return set(), maxp
 
     # ------------------------------------------------------------------
     # 查询
@@ -1970,7 +1984,10 @@ class MinecraftPlugin(Star):
         try:
             srv, err = self._rcon_ready()
             tps = await self._get_tps_value()
-            online = await self._players_online(self.default_server) if srv else set()
+            online = set()
+            maxp = 0
+            if srv:
+                online, maxp = await self._list_info(self.default_server)
             day = datetime.now().strftime("%Y-%m-%d")
             dd = self._playtime_daily.get(day, {})
             top = sorted(dd.items(), key=lambda x: x[1], reverse=True)[:10]
@@ -1979,6 +1996,7 @@ class MinecraftPlugin(Star):
                 "tps": tps,
                 "online": sorted(online),
                 "online_count": len(online),
+                "max_players": maxp,
                 "msg_count": self._msg_count,
                 "playtime_top": [{"player": p, "seconds": s} for p, s in top],
             })

@@ -141,7 +141,7 @@
         const d = await window.AstrBotPluginPage.apiGet('overview');
         setText('m-server', d.server);
         setText('m-tps', d.tps != null ? d.tps.toFixed(1) : '未启用');
-        setText('m-online', `${d.online_count} / ${d.online ? d.online.length : 0}`);
+        setText('m-online', `${d.online_count} / ${d.max_players ?? '-'}`);
         setText('m-msg', d.msg_count);
         renderTop(d.playtime_top || []);
         setConn(true, '已连接');
