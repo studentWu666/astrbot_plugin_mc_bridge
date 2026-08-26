@@ -275,8 +275,10 @@
     }
     function setConn(ok, text) {
       const pill = $('conn');
+      if (!pill) return;
       pill.classList.toggle('ok', ok); pill.classList.toggle('err', !ok);
-      pill.querySelector('.conn-text').textContent = text;
+      const t = pill.querySelector('.conn-text');
+      if (t) t.textContent = text;
     }
 
     async function init() {
@@ -294,23 +296,41 @@
       } catch (e) {}
     }
 
-    $('#btn-refresh').onclick = () => { loadOverview(); loadServers(); loadPlayers(); loadTps(); };
-    $('#btn-save').onclick = saveConfig;
-    $('#s-toggle').onchange = (e) => {
-      if (e.target.checked) silentPost({ action: 'on', duration: '1h' });
-      else silentPost({ action: 'off' });
-    };
-    $('#s-off').onclick = () => silentPost({ action: 'off' });
-    $('#s-sched-btn').onclick = () => silentPost({ action: 'schedule', value: $('#s-sched').value });
-    document.querySelectorAll('.seg').forEach(btn => btn.onclick = () => silentPost({ action: 'on', duration: btn.dataset.dur }));
-    $('#c-backup').onclick = () => ctrlPost({ action: 'backup' }, 'ctrl-out');
-    $('#c-save').onclick = () => ctrlPost({ action: 'save' }, 'ctrl-out');
-    $('#c-stop').onclick = () => { if (confirm('确定停止服务器？')) ctrlPost({ action: 'stop' }, 'ctrl-out'); };
-    $('#player-list').onclick = (e) => {
-      const b = e.target.closest('button.mini');
-      if (b) playerPost(b.dataset.act, b.dataset.p);
-    };
-    init();
+    function on(id, prop, fn) { const el = document.getElementById(id); if (el) el[prop] = fn; }
+    function bindEvents() {
+      on('btn-refresh', 'onclick', () => { loadOverview(); loadServers(); loadPlayers(); loadTps(); });
+      on('btn-save', 'onclick', saveConfig);
+      on('s-toggle', 'onchange', (e) => {
+        if (e.target.checked) silentPost({ action: 'on', duration: '1h' });
+        else silentPost({ action: 'off' });
+      });
+      on('s-off', 'onclick', () => silentPost({ action: 'off' }));
+      on('s-sched-btn', 'onclick', () => silentPost({ action: 'schedule', value: $('#s-sched').value }));
+      document.querySelectorAll('.seg').forEach(btn => btn.onclick = () => silentPost({ action: 'on', duration: btn.dataset.dur }));
+      on('c-backup', 'onclick', () => ctrlPost({ action: 'backup' }, 'ctrl-out'));
+      on('c-save', 'onclick', () => ctrlPost({ action: 'save' }, 'ctrl-out'));
+      on('c-stop', 'onclick', () => { if (confirm('确定停止服务器？')) ctrlPost({ action: 'stop' }, 'ctrl-out'); });
+      on('player-list', 'onclick', (e) => {
+        const b = e.target.closest('button.mini');
+        if (b) playerPost(b.dataset.act, b.dataset.p);
+      });
+    }
+
+    // 确保 init 一定执行：init 先于 bindEvents，且 bindEvents 用 null 保护不中断
+    let started = false;
+    function boot() {
+      if (started) return;
+      started = true;
+      init();                       // 先加载数据 + 设置连接状态
+      try { bindEvents(); } catch (e) { console.error('bind failed:', e); }
+    }
+    // DOM 未完全就绪时用 load 事件；已就绪则立即执行；再 800ms 兜底防止事件漏触发
+    if (document.readyState === 'complete') {
+      boot();
+    } else {
+      window.addEventListener('load', boot);
+      setTimeout(() => { if (!started) boot(); }, 800);
+    }
   </script>
 </body>
 </html>
