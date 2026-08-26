@@ -430,6 +430,7 @@ class MinecraftPlugin(Star):
         # 静默开始时播报统计：从上次静默结束累计的聊天消息数与 TPS 采样均值
         self._msg_count: int = 0                               # 累计聊天消息数（仅聊天）
         self._tps_samples: list[float] = []                    # 定时采样得到的 TPS 值列表
+        self._tps_history: list[dict] = []                     # 带时间戳的 TPS 点 {ts, value}，供 WebUI 趋势图
         self._silent_stats_sent: bool = False                  # 本次静默的统计是否已播报
 
         # 玩家每日在线时长统计（用 join/quit 事件计算）
@@ -656,8 +657,11 @@ class MinecraftPlugin(Star):
                 val = await self._get_tps_value()
                 if val is not None:
                     self._tps_samples.append(val)
+                    self._tps_history.append({"ts": datetime.now().isoformat(), "value": val})
                     if len(self._tps_samples) > 1000:  # 只保留最近 1000 个样本
                         self._tps_samples = self._tps_samples[-1000:]
+                    if len(self._tps_history) > 200:   # 趋势图保留最近 200 个点
+                        self._tps_history = self._tps_history[-200:]
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -1913,16 +1917,16 @@ class MinecraftPlugin(Star):
         """注册插件 WebUI 后端 API（路由以插件名作前缀）。"""
         pfx = "astrbot_plugin_mc_bridge"
         self.context.register_web_api(
-            f"/{pfx}/overview", self._web_overview, ["GET"], "服务器总览（状态/玩家/TPS/默认服）"
+            f"/{pfx}/overview", self._web_overview, ["GET"], "控制台总览（默认服/TPS/在线/时长TOP）"
+        )
+        self.context.register_web_api(
+            f"/{pfx}/servers", self._web_servers, ["GET"], "多服务器状态卡"
         )
         self.context.register_web_api(
             f"/{pfx}/players", self._web_players, ["GET"], "在线玩家列表"
         )
         self.context.register_web_api(
-            f"/{pfx}/playtime", self._web_playtime, ["GET"], "玩家每日在线时长"
-        )
-        self.context.register_web_api(
-            f"/{pfx}/stats", self._web_stats, ["GET"], "静默统计与消息数"
+            f"/{pfx}/tps-history", self._web_tps_history, ["GET"], "TPS 趋势图数据"
         )
         self.context.register_web_api(
             f"/{pfx}/config", self._web_config_get, ["GET"], "读取配置"
@@ -1931,22 +1935,61 @@ class MinecraftPlugin(Star):
             f"/{pfx}/config", self._web_config_set, ["POST"], "保存配置"
         )
         self.context.register_web_api(
-            f"/{pfx}/command", self._web_command, ["POST"], "执行 MC 指令（需管理员）"
+            f"/{pfx}/silent", self._web_silent_get, ["GET"], "静默状态"
+        )
+        self.context.register_web_api(
+            f"/{pfx}/silent", self._web_silent_set, ["POST"], "静默控制（on/off/until/时长/定时）"
+        )
+        self.context.register_web_api(
+            f"/{pfx}/server-control", self._web_server_control, ["POST"], "服务器控制（备份/stop/重启）"
+        )
+        self.context.register_web_api(
+            f"/{pfx}/player-action", self._web_player_action, ["POST"], "玩家管理（kick/op/deop/白名单）"
         )
 
-    async def _web_overview(self):
-        """仪表盘总览：服务器状态 + 在线玩家 + TPS + 默认服务器。"""
+    def _require_admin(self) -> str | None:
+        """非管理员返回错误消息，管理员返回 None。"""
+        if self.admin_only and not request.username:
+            return "仅管理员可操作，请先登录 AstrBot Dashboard"
+        return None
+
+    async def _server_struct(self, srv: MCServer) -> dict:
+        """单个服务器结构化状态。"""
+        base = {"name": srv.name, "host": srv.host, "port": srv.port}
         try:
-            status = await self._get_status()
-            players = await self._get_players()
-            name = self.default_server or "无"
+            online = await self._players_online(srv.name)
+            tps = await self._get_tps_value(srv.name)
+            base.update({"reachable": bool(online or tps is not None), "online": sorted(online),
+                         "online_count": len(online), "tps": tps})
+        except Exception:
+            base.update({"reachable": False, "online": [], "online_count": 0, "tps": None})
+        return base
+
+    async def _web_overview(self):
+        """控制台总览：默认服、TPS、在线、今日时长 TOP。"""
+        try:
+            srv, err = self._rcon_ready()
             tps = await self._get_tps_value()
+            online = await self._players_online(self.default_server) if srv else set()
+            day = datetime.now().strftime("%Y-%m-%d")
+            dd = self._playtime_daily.get(day, {})
+            top = sorted(dd.items(), key=lambda x: x[1], reverse=True)[:10]
             return json_response({
-                "server": name,
-                "status": status,
-                "players": players,
+                "server": srv.name if srv else self.default_server or "无",
                 "tps": tps,
+                "online": sorted(online),
+                "online_count": len(online),
+                "msg_count": self._msg_count,
+                "playtime_top": [{"player": p, "seconds": s} for p, s in top],
             })
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_servers(self):
+        """多服务器状态卡。"""
+        try:
+            all_servers = [await self._server_struct(s) for s in self.servers.values()]
+            return json_response({"servers": all_servers, "default": self.default_server})
         except Exception as e:
             return error_response(str(e))
 
@@ -1954,30 +1997,14 @@ class MinecraftPlugin(Star):
         """在线玩家列表。"""
         try:
             players = await self._players_online(self.default_server)
-            return json_response({"players": sorted(players)})
+            return json_response({"players": sorted(players), "count": len(players)})
         except Exception as e:
             return error_response(str(e))
 
-    async def _web_playtime(self):
-        """每日在线时长（默认今日，可选 ?day=YYYY-MM-DD）。"""
-        day = request.query.get("day", "", str)
+    async def _web_tps_history(self):
+        """TPS 趋势图数据。"""
         try:
-            text = self._daily_playtime_text(day or None)
-            return json_response({"day": day or datetime.now().strftime("%Y-%m-%d"), "text": text})
-        except Exception as e:
-            return error_response(str(e))
-
-    async def _web_stats(self):
-        """静默统计：当前累计消息数 + TPS 样本均值 + 今日在线时长简表。"""
-        try:
-            avg = (sum(self._tps_samples) / len(self._tps_samples)) if self._tps_samples else None
-            return json_response({
-                "msg_count": self._msg_count,
-                "tps_samples": len(self._tps_samples),
-                "avg_tps": round(avg, 2) if avg is not None else None,
-                "silent": self._is_silent(),
-                "silent_status": self._silent_status(),
-            })
+            return json_response({"series": self._tps_history})
         except Exception as e:
             return error_response(str(e))
 
@@ -1989,6 +2016,8 @@ class MinecraftPlugin(Star):
                 "bridge_target": self.bridge_target_session or "",
                 "bridge_enabled": self.enable_bridge,
                 "monitor_enabled": self.enable_monitor,
+                "bridge_mc_to_qq": self.bridge_mc_to_qq,
+                "bridge_qq_to_mc": self.bridge_qq_to_mc,
                 "tps_interval": _safe_int(cfg.get("tps_sample_interval_minutes"), 10),
                 "default_server": self.default_server or "",
                 "rcon_host": cfg.get("rcon_host", ""),
@@ -2015,29 +2044,112 @@ class MinecraftPlugin(Star):
             if "tps_interval" in payload:
                 v = _safe_int(payload["tps_interval"], 10)
                 upd["tps_sample_interval_minutes"] = max(1, v)
-            self.config.update(upd)
+            if upd:
+                self.config.update(upd)
+                try:
+                    self.config.save_config()
+                except Exception as e:
+                    self.logger.warning(f"配置保存到文件失败: {e}")
             return json_response({"saved": True, "updated": list(upd.keys())})
         except Exception as e:
             return error_response(str(e))
 
-    async def _web_command(self):
-        """执行 MC 指令：需已登录为管理员，直接走 RCON。"""
+    async def _web_silent_get(self):
+        """静默状态（结构化，供可视化开关/定时）。"""
         try:
-            username = request.username
-            if self.admin_only and not username:
-                return error_response("仅管理员可执行，请先登录 AstrBot Dashboard")
-            payload = await request.json(default={})
-            if not isinstance(payload, dict):
-                return error_response("参数必须是 JSON 对象")
-            cmd = str(payload.get("command") or "").strip()
-            if not cmd:
-                return error_response("command 不能为空")
-            # 防止注入换行，与 _rcon 一致
-            srv, err = self._rcon_ready()
-            if srv is None:
+            sched = None
+            if self._silent_schedule_start is not None and self._silent_schedule_end is not None:
+                sched = f"{self._silent_schedule_start.strftime('%H:%M')}-{self._silent_schedule_end.strftime('%H:%M')}"
+            until = self._silent_until.isoformat() if self._silent_until else None
+            return json_response({
+                "active": self._is_silent(),
+                "manual": self._silent_manual,
+                "until": until,
+                "schedule": sched,
+                "silent_msg_count": len(self._silent_buffer),
+            })
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_silent_set(self):
+        """静默控制：{action: on|off|until|schedule, value?, duration?}。"""
+        try:
+            err = self._require_admin()
+            if err:
                 return error_response(err)
-            out = await self._rcon(cmd)
-            return json_response({"result": out or ""})
+            payload = await request.json(default={})
+            action = str(payload.get("action") or "").lower()
+            if action == "off":
+                self._silent_until = None
+                self._silent_manual = False
+                self._silent_stats_sent = False
+                if not self._is_silent():
+                    await self._flush_silent_buffer()
+                    self._silent_prev_active = False
+                return json_response({"saved": True, "active": False})
+            if action == "on":
+                dur = self._parse_duration(str(payload.get("duration") or ""))
+                if dur is None:
+                    self._silent_manual = True
+                    self._silent_until = None
+                else:
+                    self._silent_until = datetime.now() + dur
+                    self._silent_manual = False
+                await self._send_silent_start_stats()
+                return json_response({"saved": True, "active": True})
+            if action == "until":
+                t = self._parse_clock(str(payload.get("value") or ""))
+                if t is None:
+                    return error_response("时间格式错误，应为 HH:MM")
+                self._silent_until = self._next_datetime(t)
+                self._silent_manual = False
+                await self._send_silent_start_stats()
+                return json_response({"saved": True, "active": True})
+            if action == "schedule":
+                if not self._set_schedule(str(payload.get("value") or "")):
+                    return error_response("时段格式错误，应为 HH:MM-HH:MM")
+                return json_response({"saved": True, "schedule": self._silent_schedule_start.strftime("%H:%M") + "-" + self._silent_schedule_end.strftime("%H:%M") if self._silent_schedule_start else None})
+            return error_response("未知 action")
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_server_control(self):
+        """服务器控制：{action: backup|save|stop, server?}。"""
+        try:
+            err = self._require_admin()
+            if err:
+                return error_response(err)
+            payload = await request.json(default={})
+            action = str(payload.get("action") or "").lower()
+            srv_name = str(payload.get("server") or self.default_server)
+            cmds = {"backup": "save-all", "save": "save-all", "saveall": "save-all"}
+            if action in cmds:
+                out = await self._rcon(cmds[action], srv_name)
+                return json_response({"result": out or "ok"})
+            if action == "stop":
+                out = await self._rcon_zh("stop", srv_name)
+                return json_response({"result": out})
+            return error_response("未知 action：仅支持 backup/save/stop")
+        except Exception as e:
+            return error_response(str(e))
+
+    async def _web_player_action(self):
+        """玩家管理：{action: kick|op|deop|whitelist_add|whitelist_remove, player}。"""
+        try:
+            err = self._require_admin()
+            if err:
+                return error_response(err)
+            payload = await request.json(default={})
+            action = str(payload.get("action") or "").lower()
+            player = _clean(str(payload.get("player") or ""))
+            if not player:
+                return error_response("player 不能为空")
+            mp = {"kick": f"kick {player}", "op": f"op {player}", "deop": f"deop {player}",
+                  "whitelist_add": f"whitelist add {player}", "whitelist_remove": f"whitelist remove {player}"}
+            if action not in mp:
+                return error_response("未知 action")
+            out = await self._rcon_zh(mp[action])
+            return json_response({"result": out})
         except Exception as e:
             return error_response(str(e))
 

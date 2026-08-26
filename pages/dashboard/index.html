@@ -15,10 +15,7 @@
         <p class="brand-sub">RCON · 聊天桥接 · 静默调度</p>
       </div>
     </div>
-    <div class="conn-pill" id="conn">
-      <span class="dot"></span>
-      <span class="conn-text">连接中</span>
-    </div>
+    <div class="conn-pill" id="conn"><span class="dot"></span><span class="conn-text">连接中</span></div>
   </header>
 
   <main>
@@ -27,190 +24,286 @@
         <h2><span class="ico">▣</span> 服务器总览</h2>
         <button class="btn ghost" id="btn-refresh">刷新</button>
       </div>
-      <div class="kpis">
-        <div class="kpi">
-          <span class="kpi-label">默认服务器</span>
-          <span class="kpi-value" id="m-server">—</span>
-        </div>
-        <div class="kpi">
-          <span class="kpi-label">当前 TPS</span>
-          <span class="kpi-value good" id="m-tps">—</span>
-        </div>
+      <div class="kpis four">
+        <div class="kpi"><span class="kpi-label">默认服务器</span><span class="kpi-value" id="m-server">—</span></div>
+        <div class="kpi"><span class="kpi-label">当前 TPS</span><span class="kpi-value good" id="m-tps">—</span></div>
+        <div class="kpi"><span class="kpi-label">在线玩家</span><span class="kpi-value" id="m-online">—</span></div>
+        <div class="kpi"><span class="kpi-label">今日消息</span><span class="kpi-value" id="m-msg">—</span></div>
       </div>
       <div class="panel">
-        <div class="panel-title">服务器状态</div>
-        <pre id="p-status" class="mono">—</pre>
-      </div>
-      <div class="panel">
-        <div class="panel-title">在线玩家</div>
-        <pre id="p-players" class="mono">—</pre>
+        <div class="panel-title">TPS 趋势 <span class="hint" id="tps-hint"></span></div>
+        <div class="chart" id="chart-tps"><svg id="tps-svg"></svg></div>
       </div>
     </section>
 
-    <section class="card" id="playtime">
-      <div class="card-head">
-        <h2><span class="ico">⏱</span> 玩家在线时长</h2>
-        <button class="btn ghost" id="btn-playtime">刷新今日</button>
-      </div>
-      <pre id="p-playtime" class="mono">—</pre>
+    <section class="card" id="servers">
+      <div class="card-head"><h2><span class="ico">🖥</span> 服务器列表</h2></div>
+      <div id="server-cards" class="server-grid"></div>
     </section>
 
-    <section class="card" id="stats">
-      <div class="card-head">
-        <h2><span class="ico">📈</span> 静默统计</h2>
-        <button class="btn ghost" id="btn-stats">刷新统计</button>
+    <section class="card" id="players">
+      <div class="card-head"><h2><span class="ico">👥</span> 在线玩家</h2></div>
+      <div id="player-list" class="player-list"></div>
+    </section>
+
+    <section class="card" id="top">
+      <div class="card-head"><h2><span class="ico">⏱</span> 今日在线时长 TOP</h2></div>
+      <div id="top-list" class="top-list"></div>
+    </section>
+
+    <section class="card" id="silent">
+      <div class="card-head"><h2><span class="ico">🔕</span> 静默控制</h2></div>
+      <div class="toggle-row">
+        <label class="switch">
+          <input type="checkbox" id="s-toggle">
+          <span class="slider"></span>
+        </label>
+        <span class="toggle-label" id="s-state">当前未静默</span>
       </div>
-      <div class="kpis three">
-        <div class="kpi">
-          <span class="kpi-label">静默中</span>
-          <span class="kpi-value" id="m-silent">—</span>
-        </div>
-        <div class="kpi">
-          <span class="kpi-label">累计消息</span>
-          <span class="kpi-value" id="m-msg">—</span>
-        </div>
-        <div class="kpi">
-          <span class="kpi-label">TPS 样本</span>
-          <span class="kpi-value" id="m-smp">—</span>
-        </div>
-        <div class="kpi">
-          <span class="kpi-label">均值 TPS</span>
-          <span class="kpi-value" id="m-avg">—</span>
+      <div class="field">
+        <label>临时静默时长</label>
+        <div class="segrow">
+          <button class="seg" data-dur="30m">30 分钟</button>
+          <button class="seg" data-dur="1h">1 小时</button>
+          <button class="seg" data-dur="2h">2 小时</button>
+          <button class="seg" data-dur="4h">4 小时</button>
         </div>
       </div>
-      <pre id="p-status2" class="mono">—</pre>
+      <div class="field">
+        <label>每日定时静默</label>
+        <div class="cmdrow">
+          <input id="s-sched" type="text" placeholder="如 21:00-08:00">
+          <button class="btn" id="s-sched-btn">应用定时</button>
+        </div>
+      </div>
+      <button class="btn danger" id="s-off">结束静默</button>
+      <span class="msg" id="s-msg"></span>
     </section>
 
     <section class="card" id="config">
-      <div class="card-head">
-        <h2><span class="ico">⚙</span> 配置</h2>
-      </div>
-      <div class="field">
-        <label>桥接转发目标会话</label>
-        <input id="c-target" type="text" placeholder="aiocqhttp:group:123456">
-      </div>
-      <div class="field">
-        <label>默认服务器</label>
-        <input id="c-server" type="text" placeholder="default">
-      </div>
-      <div class="field">
-        <label>TPS 采样间隔（分钟）</label>
-        <input id="c-tpsint" type="number" min="1" placeholder="10">
-      </div>
-      <div class="field-actions">
-        <button class="btn" id="btn-save">保存配置</button>
-        <span class="msg" id="cfg-msg"></span>
-      </div>
+      <div class="card-head"><h2><span class="ico">⚙</span> 配置</h2></div>
+      <div class="field"><label>桥接转发目标会话</label><input id="c-target" type="text" placeholder="aiocqhttp:group:123456"></div>
+      <div class="field"><label>默认服务器</label><input id="c-server" type="text" placeholder="default"></div>
+      <div class="field"><label>TPS 采样间隔（分钟）</label><input id="c-tpsint" type="number" min="1" placeholder="10"></div>
+      <div class="field-actions"><button class="btn" id="btn-save">保存配置</button><span class="msg" id="cfg-msg"></span></div>
     </section>
 
-    <section class="card" id="command">
-      <div class="card-head">
-        <h2><span class="ico">⌨</span> 执行 MC 指令</h2>
+    <section class="card" id="ctrl">
+      <div class="card-head"><h2><span class="ico">🎮</span> 服务器控制</h2></div>
+      <div class="ctrlrow">
+        <button class="btn" id="c-backup">立即备份</button>
+        <button class="btn warn" id="c-save">保存世界</button>
+        <button class="btn danger" id="c-stop">停止服务器</button>
       </div>
-      <div class="cmdrow">
-        <input id="cmd-input" type="text" placeholder="如 list / time set day">
-        <button class="btn" id="btn-cmd">发送</button>
-      </div>
-      <pre id="cmd-out" class="mono">—</pre>
+      <pre id="ctrl-out" class="mono">—</pre>
     </section>
   </main>
 
   <script>
     let bridge = null;
     const $ = (id) => document.getElementById(id);
-    function setText(id, v, hasStat) { $(id).textContent = v == null || v === '' ? '—' : v; setBadge(id, hasStat); }
+    const setText = (id, v) => { $(id).textContent = (v == null || v === '') ? '—' : v; };
 
-    function setBadge(id, hasStat) {
-      const el = $(id);
-      if (el.classList.contains('good')) el.classList.remove('good');
-      if (el.classList.contains('warn')) el.classList.remove('warn');
-      if (hasStat === undefined) return;
-      if (hasStat) el.classList.add('good');
+    function fmtSecs(s) {
+      s = Math.max(0, Math.floor(s || 0));
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+      if (h) return `${h}h ${m}m`;
+      if (m) return `${m}m`;
+      return `${s}s`;
+    }
+
+    function drawTpsSeries(points) {
+      const svg = $('tps-svg');
+      const W = svg.clientWidth || 600, H = 130;
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      if (!points || points.length < 2) {
+        svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="var(--text-3)">暂无 TPS 样本</text>`;
+        return;
+      }
+      const vals = points.map(p => p.value);
+      const pad = 8;
+      const minV = Math.max(0, Math.min(...vals) - 1);
+      const maxV = Math.min(20, Math.max(...vals) + 1);
+      const dx = (W - pad * 2) / (points.length - 1);
+      const y = (v) => H - pad - ((v - minV) / (maxV - minV || 1)) * (H - pad * 2);
+      const path = points.map((p, i) => `${i ? 'L' : 'M'}${(pad + i * dx).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ');
+      let area = `${path} L${(pad + (points.length-1)*dx).toFixed(1)},${H - pad} L${pad},${H - pad} Z`;
+      const last = points[points.length - 1];
+      svg.innerHTML = `
+        <path d="${area}" fill="var(--accent-soft)" stroke="none"/>
+        <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="${(pad + (points.length-1)*dx).toFixed(1)}" cy="${y(last.value).toFixed(1)}" r="3.5" fill="var(--accent)"/>
+        <text x="${W - pad}" y="${y(last.value) - 8}" text-anchor="end" fill="var(--accent)" font-size="11">${last.value.toFixed(1)} TPS</text>`;
     }
 
     async function loadOverview() {
       try {
-        const d = await bridge.apiGet('overview');
+        const d = await window.AstrBotPluginPage.apiGet('overview');
         setText('m-server', d.server);
-        const tps = d.tps;
-        setText('m-tps', tps != null ? tps.toFixed(1) : '未启用', tps != null);
-        setText('p-status', d.status);
-        setText('p-players', d.players);
-      } catch (e) { setText('p-status', '加载失败: ' + e); }
-    }
-    async function loadPlaytime() {
-      try {
-        const d = await bridge.apiGet('playtime');
-        setText('p-playtime', d.text);
-      } catch (e) { setText('p-playtime', '加载失败: ' + e); }
-    }
-    async function loadStats() {
-      try {
-        const d = await bridge.apiGet('stats');
-        setText('m-silent', d.silent ? '是' : '否', d.silent);
+        setText('m-tps', d.tps != null ? d.tps.toFixed(1) : '未启用');
+        setText('m-online', `${d.online_count} / ${d.online ? d.online.length : 0}`);
         setText('m-msg', d.msg_count);
-        setText('m-smp', d.tps_samples);
-        setText('m-avg', d.avg_tps != null ? d.avg_tps : '—', d.avg_tps != null);
-        setText('p-status2', d.silent_status);
-      } catch (e) { setText('p-status2', '加载失败: ' + e); }
+        renderTop(d.playtime_top || []);
+      } catch (e) { setText('m-server', '加载失败'); }
     }
+
+    function renderTop(top) {
+      const el = $('top-list');
+      if (!top.length) { el.innerHTML = '<div class="empty">今日暂无在线时长记录</div>'; return; }
+      const max = top[0].seconds || 1;
+      el.innerHTML = top.map((t, i) => `
+        <div class="top-row">
+          <span class="top-rank">${i + 1}</span>
+          <span class="top-name">${t.player}</span>
+          <span class="top-bar"><span style="width:${(t.seconds / max * 100).toFixed(1)}%"></span></span>
+          <span class="top-time">${fmtSecs(t.seconds)}</span>
+        </div>`).join('');
+    }
+
+    function renderPlayers(players) {
+      const el = $('player-list');
+      if (!players || !players.length) { el.innerHTML = '<div class="empty">当前无人在线</div>'; return; }
+      el.innerHTML = players.map(p => `
+        <div class="player-row">
+          <span class="player-name">${p}</span>
+          <span class="player-acts">
+            <button class="mini" data-act="kick" data-p="${p}">踢出</button>
+            <button class="mini" data-act="op" data-p="${p}">给 OP</button>
+            <button class="mini" data-act="deop" data-p="${p}">去 OP</button>
+          </span>
+        </div>`).join('');
+    }
+
+    async function loadServers() {
+      try {
+        const d = await window.AstrBotPluginPage.apiGet('servers');
+        const el = $('server-cards');
+        if (!d.servers || !d.servers.length) { el.innerHTML = '<div class="empty">未配置服务器</div>'; return; }
+        el.innerHTML = d.servers.map(s => `
+          <div class="server-card ${s.reachable ? '' : 'down'}">
+            <div class="sc-head"><span class="sc-name">${s.name}</span>
+              <span class="badge ${s.reachable ? 'ok' : 'err'}">${s.reachable ? '在线' : '离线'}</span></div>
+            <div class="sc-host">${s.host}:${s.port}</div>
+            <div class="sc-meta">
+              <span>在线 <b>${s.online_count}</b></span>
+              <span>TPS <b>${s.tps != null ? s.tps.toFixed(1) : '—'}</b></span>
+            </div>
+            <div class="sc-players">${s.online && s.online.length ? s.online.join(', ') : '无人在线'}</div>
+          </div>`).join('');
+      } catch (e) { $('server-cards').innerHTML = '<div class="empty">加载失败</div>'; }
+    }
+
+    async function loadPlayers() {
+      try {
+        const d = await window.AstrBotPluginPage.apiGet('players');
+        renderPlayers(d.players);
+      } catch (e) { $('player-list').innerHTML = '<div class="empty">加载失败</div>'; }
+    }
+
+    async function loadTps() {
+      try {
+        const d = await window.AstrBotPluginPage.apiGet('tps-history');
+        drawTpsSeries(d.series || []);
+        $('tps-hint').textContent = `${(d.series || []).length} 个样本`;
+      } catch (e) { drawTpsSeries([]); }
+    }
+
     async function loadConfig() {
       try {
-        const d = await bridge.apiGet('config');
+        const d = await window.AstrBotPluginPage.apiGet('config');
         $('c-target').value = d.bridge_target || '';
         $('c-server').value = d.default_server || '';
         $('c-tpsint').value = d.tps_interval || 10;
       } catch (e) { $('cfg-msg').textContent = '加载失败: ' + e; }
     }
+
+    async function loadSilent() {
+      try {
+        const d = await window.AstrBotPluginPage.apiGet('silent');
+        $('s-toggle').checked = d.active;
+        $('s-state').textContent = d.active ? '静默中' : '当前未静默';
+        if (d.schedule) $('s-sched').value = d.schedule;
+      } catch (e) {}
+    }
+
     async function saveConfig() {
       try {
-        const r = await bridge.apiPost('config', {
+        const r = await window.AstrBotPluginPage.apiPost('config', {
           bridge_target: $('c-target').value,
           default_server: $('c-server').value,
           tps_interval: parseInt($('c-tpsint').value, 10) || 10,
         });
         $('cfg-msg').textContent = r.saved ? '✓ 已保存' : '保存失败';
         $('cfg-msg').className = r.saved ? 'msg ok' : 'msg err';
-      } catch (e) { $('cfg-msg').textContent = '保存失败: ' + e; $('cfg-msg').className = 'msg err'; }
+      } catch (e) { $('cfg-msg').textContent = '保存失败: ' + e; }
+      $('cfg-msg').className = 'msg err';
     }
-    async function sendCommand() {
-      const cmd = $('cmd-input').value.trim();
-      if (!cmd) return;
-      $('cmd-out').textContent = '执行中…';
+
+    async function silentPost(payload) {
       try {
-        const r = await bridge.apiPost('command', { command: cmd });
-        $('cmd-out').textContent = r.result || '（无输出）';
-      } catch (e) { $('cmd-out').textContent = '失败: ' + e; }
+        await window.AstrBotPluginPage.apiPost('silent', payload);
+        loadSilent();
+        $('s-msg').textContent = '✓ 已应用';
+        $('s-msg').className = 'msg ok';
+      } catch (e) { $('s-msg').textContent = '失败: ' + e; $('s-msg').className = 'msg err'; }
+    }
+
+    async function ctrlPost(payload, outId) {
+      try {
+        $(outId).textContent = '执行中…';
+        const r = await window.AstrBotPluginPage.apiPost('server-control', payload);
+        $(outId).textContent = r.result || '（无输出）';
+      } catch (e) { $(outId).textContent = '失败: ' + e; }
+    }
+
+    async function playerPost(action, player) {
+      try {
+        const r = await window.AstrBotPluginPage.apiPost('player-action', { action, player });
+        alert(`${player}: ${r.result || 'ok'}`);
+        loadPlayers();
+      } catch (e) { alert('失败: ' + e); }
     }
 
     async function waitBridge(timeoutMs = 8000) {
       const start = Date.now();
       while (Date.now() - start < timeoutMs) {
-        if (window.AstrBotPluginPage) { bridge = window.AstrBotPluginPage; return true; }
+        if (window.AstrBotPluginPage) return true;
         await new Promise((r) => setTimeout(r, 100));
       }
       return false;
     }
-
     function setConn(ok, text) {
       const pill = $('conn');
-      pill.classList.toggle('ok', ok);
-      pill.classList.toggle('err', !ok);
+      pill.classList.toggle('ok', ok); pill.classList.toggle('err', !ok);
       pill.querySelector('.conn-text').textContent = text;
     }
 
     async function init() {
       const ok = await waitBridge();
       setConn(ok, ok ? '已连接' : '连接失败');
-      if (ok) { try { await bridge.ready(); } catch (e) { setConn(false, '桥接异常'); return; } }
-      loadOverview(); loadPlaytime(); loadStats(); loadConfig();
+      if (ok) {
+        // ready() 依赖父页面注入 context，可能不 resolve；用超时抢跑，不阻塞数据加载
+        try { await Promise.race([window.AstrBotPluginPage.ready(), new Promise(r => setTimeout(r, 1500))]); } catch (e) {}
+      }
+      loadOverview(); loadServers(); loadPlayers(); loadTps(); loadConfig(); loadSilent();
     }
-    $('btn-refresh').onclick = loadOverview;
-    $('btn-playtime').onclick = loadPlaytime;
-    $('btn-stats').onclick = loadStats;
-    $('btn-save').onclick = saveConfig;
-    $('btn-cmd').onclick = sendCommand;
-    $('cmd-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendCommand(); });
+
+    $('#btn-refresh').onclick = () => { loadOverview(); loadServers(); loadPlayers(); loadTps(); };
+    $('#btn-save').onclick = saveConfig;
+    $('#s-toggle').onchange = (e) => {
+      if (e.target.checked) silentPost({ action: 'on', duration: '1h' });
+      else silentPost({ action: 'off' });
+    };
+    $('#s-off').onclick = () => silentPost({ action: 'off' });
+    $('#s-sched-btn').onclick = () => silentPost({ action: 'schedule', value: $('#s-sched').value });
+    document.querySelectorAll('.seg').forEach(btn => btn.onclick = () => silentPost({ action: 'on', duration: btn.dataset.dur }));
+    $('#c-backup').onclick = () => ctrlPost({ action: 'backup' }, 'ctrl-out');
+    $('#c-save').onclick = () => ctrlPost({ action: 'save' }, 'ctrl-out');
+    $('#c-stop').onclick = () => { if (confirm('确定停止服务器？')) ctrlPost({ action: 'stop' }, 'ctrl-out'); };
+    $('#player-list').onclick = (e) => {
+      const b = e.target.closest('button.mini');
+      if (b) playerPost(b.dataset.act, b.dataset.p);
+    };
     init();
   </script>
 </body>
