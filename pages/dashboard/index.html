@@ -88,6 +88,13 @@
       <div class="field-actions"><button class="btn" id="btn-save">保存配置</button><span class="msg" id="cfg-msg"></span></div>
     </section>
 
+    <section class="card" id="auto">
+      <div class="card-head"><h2><span class="ico">🤖</span> 自动行为开关</h2></div>
+      <div class="switches" id="sw-list"></div>
+      <div class="sw-trigger" id="sw-trigger">—</div>
+      <span class="msg" id="sw-msg"></span>
+    </section>
+
     <section class="card" id="ctrl">
       <div class="card-head"><h2><span class="ico">🎮</span> 服务器控制</h2></div>
       <div class="ctrlrow">
@@ -103,6 +110,24 @@
     let bridge = null;
     const $ = (id) => document.getElementById(id);
     const setText = (id, v) => { $(id).textContent = (v == null || v === '') ? '—' : v; };
+
+    // 自动触发行为的开关：key 必须与插件 _TOGGLE_KEYS 中的配置项同名
+    const TOGGLES = [
+      { key: 'silent_stats_enabled', label: '静默周期统计播报', tip: '总开关。关闭后任何情况都不再自动向群发送统计', group: '统计' },
+      { key: 'silent_stats_on_auto_exit', label: '定时静默结束时播报', tip: '推荐时机：每日定时静默时段自动结束的那一刻', group: '统计' },
+      { key: 'silent_stats_on_auto_enter', label: '定时静默开始时播报', tip: '默认关闭，避免与「结束时播报」重复', group: '统计' },
+      { key: 'silent_stats_on_manual', label: '手动静默结束时也播报', tip: '默认关闭：手动开关静默不触发统计播报', group: '统计' },
+      { key: 'silent_replay_enabled', label: '静默结束回放汇总', tip: '静默结束时发送「共收到 N 条动态」', group: '静默' },
+      { key: 'silent_replay_detail', label: '回放包含聊天明细', tip: '逐条列出静默期间的聊天内容（最多 50 条）', group: '静默' },
+      { key: 'tps_sampling_enabled', label: 'TPS 定时采样', tip: '后台采样 TPS；需同时启用「性能监控」', group: '采集' },
+      { key: 'playtime_tracking_enabled', label: '玩家在线时长统计', tip: '通过加入/退出事件统计每日时长', group: '采集' },
+      { key: 'bridge_notify_advancement', label: '转发成就通知', tip: 'MC → QQ', group: '转发' },
+      { key: 'bridge_notify_death', label: '转发死亡通知', tip: 'MC → QQ', group: '转发' },
+      { key: 'bridge_notify_join_quit', label: '转发进出服通知', tip: 'MC → QQ', group: '转发' },
+      { key: 'bridge_mc_to_qq', label: 'MC → QQ 转发', tip: '游戏内聊天转进群', group: '转发' },
+      { key: 'bridge_qq_to_mc', label: 'QQ → MC 转发', tip: '群消息广播进游戏', group: '转发' },
+      { key: 'bridge_filter_commands', label: '过滤命令消息', tip: '以 / ! . 开头的群消息不转发进游戏', group: '转发' },
+    ];
 
     function fmtSecs(s) {
       s = Math.max(0, Math.floor(s || 0));
@@ -215,7 +240,38 @@
         $('c-target').value = d.bridge_target || '';
         $('c-server').value = d.default_server || '';
         $('c-tpsint').value = d.tps_interval || 10;
+        renderSwitches(d);
       } catch (e) { $('cfg-msg').textContent = '加载失败: ' + e; }
+    }
+
+    function renderSwitches(d) {
+      const el = $('sw-list');
+      if (!el) return;
+      el.innerHTML = TOGGLES.map(t => `
+        <label class="sw-row">
+          <span class="sw-text">
+            <span class="sw-name">${t.label}</span>
+            <span class="sw-tip">${t.tip}</span>
+          </span>
+          <span class="switch small">
+            <input type="checkbox" id="sw-${t.key}" ${d[t.key] ? 'checked' : ''}>
+            <span class="slider"></span>
+          </span>
+        </label>`).join('');
+      TOGGLES.forEach(t => on(`sw-${t.key}`, 'onchange', (e) => togglePost(t.key, e.target.checked)));
+      const trg = $('sw-trigger');
+      if (trg) trg.textContent = '📊 统计播报时机：' + (d.stats_trigger || '—');
+    }
+
+    async function togglePost(key, val) {
+      const msg = $('sw-msg');
+      try {
+        await window.AstrBotPluginPage.apiPost('config', { [key]: val });
+        if (msg) { msg.textContent = '✓ 已保存并即时生效'; msg.className = 'msg ok'; }
+        loadConfig();
+      } catch (e) {
+        if (msg) { msg.textContent = '保存失败: ' + e; msg.className = 'msg err'; }
+      }
     }
 
     async function loadSilent() {

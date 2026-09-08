@@ -190,5 +190,65 @@
         "type": "int",
         "hint": "最小 10 秒；服务器连续 3 次 RCON 失败后自动跳过轮询",
         "default": 30
+    },
+    "silent_stats_enabled": {
+        "description": "启用静默统计播报",
+        "type": "bool",
+        "hint": "总开关。关闭后任何情况下都不会自动向群里发送周期统计；仍可用 /mc playtime 手动查询",
+        "default": true
+    },
+    "silent_stats_on_auto_exit": {
+        "description": "定时静默结束时播报统计",
+        "type": "bool",
+        "hint": "推荐时机：每日定时静默时段自动结束的那一刻播报本周期统计（聊天消息数 / 平均 TPS / 当日在线时长）。由后台每 5 秒检测一次，误差约 5 秒",
+        "default": true
+    },
+    "silent_stats_on_auto_enter": {
+        "description": "定时静默开始时播报统计",
+        "type": "bool",
+        "hint": "在每日定时静默时段自动开始的那一刻播报上一周期统计。默认关闭，避免与「结束时播报」重复",
+        "default": false
+    },
+    "silent_stats_on_manual": {
+        "description": "手动静默结束时也播报统计",
+        "type": "bool",
+        "hint": "开启后，手动静默（/mc silent on、WebUI 开启静默）结束时同样播报统计。默认关闭：手动开关静默属于临时操作，不触发自动播报。注意统计只在周期结束时有意义，因此手动「开启」时不会播报",
+        "default": false
+    },
+    "silent_replay_enabled": {
+        "description": "静默结束回放汇总",
+        "type": "bool",
+        "hint": "静默结束时向转发目标发送「静默期间共收到 N 条动态」的汇总消息",
+        "default": true
+    },
+    "silent_replay_detail": {
+        "description": "回放包含聊天明细",
+        "type": "bool",
+        "hint": "开启后，静默结束会逐条回放期间的聊天内容（最多 50 条）；默认仅报数量，不刷屏",
+        "default": false
+    },
+    "tps_sampling_enabled": {
+        "description": "启用 TPS 定时采样",
+        "type": "bool",
+        "hint": "后台定时采样 TPS，用于统计播报与 WebUI 趋势图；需同时启用「性能监控」，且服务端支持 tps 指令",
+        "default": true
+    },
+    "playtime_tracking_enabled": {
+        "description": "启用在线时长统计",
+        "type": "bool",
+        "hint": "通过玩家加入/退出事件自动统计每日在线时长并持久化到 playtime_state.json",
+        "default": true
+    },
+    "bridge_notify_advancement": {
+        "description": "转发玩家成就通知",
+        "type": "bool",
+        "hint": "玩家达成成就时向 QQ 群发送通知（依赖鹊桥）",
+        "default": true
+    },
+    "bridge_filter_commands": {
+        "description": "过滤命令消息（QQ → MC）",
+        "type": "bool",
+        "hint": "开启后，以 / ! . 等命令前缀开头、或以 mc/已知子指令开头的群消息不会转发进游戏",
+        "default": true
     }
 }
