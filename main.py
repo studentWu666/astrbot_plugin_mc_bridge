@@ -408,6 +408,7 @@ class MinecraftPlugin(Star):
         self.config = config if isinstance(config, dict) else {}
         self._load_config()
         self._tasks: list[asyncio.Task] = []
+        self._tps_task: Optional[asyncio.Task] = None   # TPS 采样任务（可独立启停）
         self._bridge_server: Optional[asyncio.AbstractServer] = None
         self._bridge_writers: set[asyncio.StreamWriter] = set()
         self._player_cache: dict[str, set[str]] = {}
@@ -431,7 +432,14 @@ class MinecraftPlugin(Star):
         self._msg_count: int = 0                               # 累计聊天消息数（仅聊天）
         self._tps_samples: list[float] = []                    # 定时采样得到的 TPS 值列表
         self._tps_history: list[dict] = []                     # 带时间戳的 TPS 点 {ts, value}，供 WebUI 趋势图
-        self._silent_stats_sent: bool = False                  # 本次静默的统计是否已播报
+        self._silent_stats_sent: bool = False                  # 本次静默周期内是否已播报（防重复）
+
+        # 静默状态边沿检测（统计播报的唯一触发源）
+        self._silent_auto: bool = False                        # 本次静默是否由「每日定时」自动进入
+        self._silent_prev_flag: bool = False                   # 上一轮监视到的静默状态
+        self._silent_exit_done: bool = False                   # 本次静默的退出流程是否已执行（幂等）
+        self._silent_enter_at: Optional[datetime] = None       # 本次静默开始时刻
+        self._last_stats_at: Optional[datetime] = None         # 上一次统计播报时刻（周期起点）
 
         # 玩家每日在线时长统计（用 join/quit 事件计算）
         self._plugin_dir = os.path.dirname(os.path.abspath(__file__))
@@ -483,6 +491,22 @@ class MinecraftPlugin(Star):
         self.bridge_format_qq = str(cfg.get("bridge_format_qq") or "[QQ]{sender}: {msg}")
         self.bridge_notify_join_quit = bool(cfg.get("bridge_notify_join_quit", True))
         self.bridge_notify_death = bool(cfg.get("bridge_notify_death", True))
+
+        # ---- 自动行为开关（均为自动触发的功能，可逐项关闭）------------------
+        # 静默周期统计播报
+        self.silent_stats_enabled = bool(cfg.get("silent_stats_enabled", True))
+        self.silent_stats_on_auto_exit = bool(cfg.get("silent_stats_on_auto_exit", True))
+        self.silent_stats_on_auto_enter = bool(cfg.get("silent_stats_on_auto_enter", False))
+        self.silent_stats_on_manual = bool(cfg.get("silent_stats_on_manual", False))
+        # 静默结束回放
+        self.silent_replay_enabled = bool(cfg.get("silent_replay_enabled", True))
+        self.silent_replay_detail = bool(cfg.get("silent_replay_detail", False))
+        # 后台采集/统计
+        self.tps_sampling_enabled = bool(cfg.get("tps_sampling_enabled", True))
+        self.playtime_tracking_enabled = bool(cfg.get("playtime_tracking_enabled", True))
+        # 转发类自动行为
+        self.bridge_notify_advancement = bool(cfg.get("bridge_notify_advancement", True))
+        self.bridge_filter_commands = bool(cfg.get("bridge_filter_commands", True))
 
     # ------------------------------------------------------------------
     # RCON 基础
@@ -542,6 +566,24 @@ class MinecraftPlugin(Star):
     def _server_reachable(self, srv: MCServer) -> bool:
         """连续失败次数达到阈值后跳过轮询，成功执行任意指令即恢复。"""
         return self._server_failures.get(srv.name, 0) < 3
+
+    # 可在 WebUI 即时切换的自动行为开关：键名与 self 上的属性名一一对应
+    _TOGGLE_KEYS = (
+        "silent_stats_enabled",
+        "silent_stats_on_auto_exit",
+        "silent_stats_on_auto_enter",
+        "silent_stats_on_manual",
+        "silent_replay_enabled",
+        "silent_replay_detail",
+        "tps_sampling_enabled",
+        "playtime_tracking_enabled",
+        "bridge_notify_advancement",
+        "bridge_filter_commands",
+        "bridge_notify_join_quit",
+        "bridge_notify_death",
+        "bridge_mc_to_qq",
+        "bridge_qq_to_mc",
+    )
 
     # ------------------------------------------------------------------
     # list 输出解析
@@ -680,6 +722,22 @@ class MinecraftPlugin(Star):
                 break
             except Exception as e:
                 self.logger.error(f"TPS 采样异常: {e}")
+
+    def _ensure_tps_task(self) -> None:
+        """按当前开关把 TPS 采样任务调整到应有状态（已在运行则不重复启动）。
+
+        允许在 WebUI 里即时开关采样而不必重载插件；关闭时取消任务，不留僵尸循环。
+        """
+        want = self.enable_monitor and self.tps_sampling_enabled
+        task = getattr(self, "_tps_task", None)
+        if want:
+            if task is None or task.done():
+                self._tps_task = asyncio.create_task(self._tps_sample_loop())
+                self.logger.info("TPS 定时采样已启动")
+        else:
+            if task is not None and not task.done():
+                task.cancel()
+                self.logger.info("TPS 定时采样已停止")
 
     # ------------------------------------------------------------------
     # 后台任务
@@ -985,6 +1043,8 @@ class MinecraftPlugin(Star):
                 reason = str(payload.get("death_message") or payload.get("content") or "").strip()
             text = f"💀 {name} {'— ' + reason if reason else '死了'}"
         elif post_type == "notice" and sub_type in ("advancement", "achievement", "player_advancement"):
+            if not self.bridge_notify_advancement:
+                return
             adv = payload.get("advancement")
             title = ""
             if isinstance(adv, dict):
@@ -1006,6 +1066,8 @@ class MinecraftPlugin(Star):
                 return
             text = f"💀 {name} 死了"
         elif event_name in ("player_advancement", "advancement", "achievement"):
+            if not self.bridge_notify_advancement:
+                return
             text = f"🏆 {name} 达成了成就"
         else:
             return
@@ -1013,20 +1075,17 @@ class MinecraftPlugin(Star):
         if server:
             text = f"[{server}] {text}" if not text.startswith("[") else text
 
-        # 静默模式：缓存消息（带时间戳），静默结束后一次性回放，而非直接丢弃
+        # 静默模式：缓存消息（带时间戳），静默结束后按配置回放，而非直接丢弃
         if self._is_silent():
-            # 兜底：手动开启或定时到点都可能走到这，确保"静默开始统计"只播一次
-            if not self._silent_stats_sent:
-                self._silent_stats_sent = True
-                await self._send_silent_start_stats()
+            # 注意：统计播报不由这里触发。时机统一交给 _silent_watcher_loop，
+            # 否则"手动开静默"和"定时到点"混在一起，播报时机不可预测。
             self._buffer_silent(text)
             return
 
-        # 静默刚结束 -> 先回放缓存的聊天记录，再继续正常转发
+        # 静默刚结束 -> 先回放缓存，再继续正常转发（兜底；正常由 watcher 的下降沿处理）
         if self._silent_prev_active:
             await self._flush_silent_buffer()
             self._silent_prev_active = False
-            self._silent_stats_sent = False  # 静默结束，重置统计播报标记
 
         target = self._bridge_target or self.bridge_target_session
         if not target:
@@ -1126,7 +1185,7 @@ class MinecraftPlugin(Star):
         if not msg:
             return
         # 命令与唤醒消息不转发（识别 /mc 等命令形态，整条过滤）
-        if self._is_command_message(msg):
+        if self.bridge_filter_commands and self._is_command_message(msg):
             return
         sender = event.get_sender_name() or "QQ用户"
         try:
@@ -1320,6 +1379,8 @@ class MinecraftPlugin(Star):
 
     def _record_playtime(self, name: str, is_join: bool, now: datetime) -> None:
         """用 join/quit 事件更新玩家在线时长。join 记开始时间，quit 结算并累加到当日。"""
+        if not self.playtime_tracking_enabled:
+            return
         if not name or name == "未知玩家":
             return
         if is_join:
@@ -1451,26 +1512,108 @@ class MinecraftPlugin(Star):
             self._silent_buffer.pop(0)  # 极端情况下防止无限增长
 
     async def _flush_silent_buffer(self) -> None:
-        """静默结束后只向转发目标报一条汇总：静默期间共收到 N 条 + 时间段。
+        """静默结束后向转发目标回放缓冲内容。
 
-        不逐条回放具体聊天内容（避免把静默期的一长串聊天一股脑发进群），
-        仅告知统计数量与跨度。具体明细不对外发送。
+        默认只发一条汇总（数量 + 时间段），避免把静默期的一长串聊天一股脑刷进群；
+        开启 silent_replay_detail 后追加逐条明细（最多 50 条）。
+        总开关 silent_replay_enabled 关闭时静默丢弃，不发任何消息。
         """
         if not self._silent_buffer:
             return
-        target = self._bridge_target or self.bridge_target_session
         entries = self._silent_buffer
         self._silent_buffer = []
+        if not self.silent_replay_enabled:
+            self.logger.info(f"静默回放已关闭，丢弃 {len(entries)} 条缓冲动态")
+            return
+        target = self._bridge_target or self.bridge_target_session
         if not target:
             self.logger.info("静默缓冲因无转发目标而丢弃")
             return
         first, last = entries[0]["ts"], entries[-1]["ts"]
-        content = f"📥 静默期间共收到 {len(entries)} 条动态" \
-                  f"（{first.strftime('%H:%M')}-{last.strftime('%H:%M')}），已按静默处理"
+        lines = [
+            f"📥 静默期间共收到 {len(entries)} 条动态"
+            f"（{first.strftime('%H:%M')}-{last.strftime('%H:%M')}），已按静默处理"
+        ]
+        if self.silent_replay_detail:
+            for e in entries[:50]:
+                lines.append(f"  {e['ts'].strftime('%H:%M')} {e['text']}")
+            if len(entries) > 50:
+                lines.append(f"  … 另有 {len(entries) - 50} 条未展示")
         try:
-            await self.context.send_message(target, MessageChain([Plain(content)]))
+            await self.context.send_message(target, MessageChain([Plain("\n".join(lines))]))
         except Exception as e:
             self.logger.error(f"静默缓冲汇总发送失败: {e}")
+
+    # ------------------------------------------------------------------
+    # 静默状态监视：周期统计播报的唯一触发源
+    # ------------------------------------------------------------------
+    async def _silent_watcher_loop(self) -> None:
+        """每 5 秒检测静默状态翻转，在明确时机触发回放与周期统计播报。
+
+        背景：静默状态是惰性求值（_is_silent 只在消息到达时才被计算），
+        因此"定时静默到点开始/到点结束"若期间没有 MC 消息就不会产生任何事件，
+        统计播报只能靠下一条消息兜底触发，时机不可预测。
+
+        这里用边沿检测把时机固定下来：
+          • False -> True ：进入静默
+          • True  -> False：退出静默
+
+        "自动"的判定：本次静默由每日定时规则（schedule）触发，
+        而非 /mc silent on 或 WebUI 手动开关。
+        """
+        self._silent_prev_flag = self._is_silent()
+        if self._silent_prev_flag:
+            # 插件启动时已在静默中：记为周期开始，但不补播统计
+            self._silent_auto = self._in_schedule(datetime.now())
+            self._silent_enter_at = datetime.now()
+        while True:
+            try:
+                await asyncio.sleep(5)
+                cur = self._is_silent()
+                if cur and not self._silent_prev_flag:
+                    await self._on_silent_enter(self._in_schedule(datetime.now()))
+                elif (not cur) and self._silent_prev_flag:
+                    await self._on_silent_exit()
+                self._silent_prev_flag = cur
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"静默状态监视异常: {e}")
+
+    async def _on_silent_enter(self, auto: bool) -> None:
+        """静默开始（上升沿）。auto=True 表示由每日定时规则自动进入。"""
+        self._silent_auto = auto
+        self._silent_enter_at = datetime.now()
+        self._silent_prev_active = True
+        self._silent_exit_done = False  # 开启新一轮，允许下次退出流程执行
+        if not self.silent_stats_enabled:
+            return
+        # 只在「进入时播报上一周期」这一种情形发送（默认关闭）。
+        # 手动开启静默不播报：统计描述的是刚结束的那段时间，进入时尚未产生数据，
+        # 若在进入时也发一份，退出时会再发一份且第二次已被清零，语义不成立。
+        if auto and self.silent_stats_on_auto_enter:
+            await self._send_period_stats("每日定时静默开始时")
+
+    async def _on_silent_exit(self) -> None:
+        """静默结束（下降沿）：先回放缓冲，再按开关决定是否播报周期统计。
+
+        幂等：/mc silent off 与监视循环可能在同一个 5 秒窗口内都检测到下降沿，
+        用 _silent_exit_done 保证回放与播报只执行一次。
+        """
+        if self._silent_exit_done:
+            return
+        self._silent_exit_done = True
+        auto = self._silent_auto
+        self._silent_prev_active = False
+        await self._flush_silent_buffer()
+        self._silent_stats_sent = False
+        self._silent_auto = False
+        if not self.silent_stats_enabled:
+            return
+        if auto and self.silent_stats_on_auto_exit:
+            await self._send_period_stats("每日定时静默结束")
+        elif (not auto) and self.silent_stats_on_manual:
+            await self._send_period_stats("手动静默结束")
 
     def _is_silent(self) -> bool:
         now = datetime.now()
@@ -1510,24 +1653,48 @@ class MinecraftPlugin(Star):
         lines.append("  /mc silent schedule off - 关闭每日定时")
         lines.append("")
         lines.append("💡 静默期间 MC→QQ 的聊天/进出/死亡/成就等动态会缓存，")
-        lines.append("   静默结束后以「聊天记录」形式一次性回放（带时间戳）。")
+        lines.append("   静默结束后按配置回放（默认仅报数量）。")
+        lines.append(f"📊 统计播报时机：{self._stats_trigger_desc()}")
         return "\n".join(lines)
 
-    async def _send_silent_start_stats(self) -> None:
-        """静默开始时向转发目标播报：累计聊天消息数 + TPS 采样均值。
+    def _stats_trigger_desc(self) -> str:
+        """用一句话描述当前配置下「周期统计」的播报时机，便于核对是否符合预期。"""
+        if not self.silent_stats_enabled:
+            return "已关闭（silent_stats_enabled=false）"
+        hits = []
+        if self.silent_stats_on_auto_exit:
+            hits.append("每日定时静默结束时")
+        if self.silent_stats_on_auto_enter:
+            hits.append("每日定时静默开始时")
+        if self.silent_stats_on_manual:
+            hits.append("手动静默结束时")
+        if not hits:
+            return "已关闭（未选中任何触发时机）"
+        sched = (
+            f"{self._silent_schedule_start.strftime('%H:%M')}"
+            f"-{self._silent_schedule_end.strftime('%H:%M')}"
+            if self._silent_schedule_start else "未设置定时"
+        )
+        return "、".join(hits) + f"（当前定时 {sched}，检测精度 5 秒）"
 
-        统计口径：从上次静默结束（或插件启动）到本次静默开始，即"白天"这段时间的
-        聊天消息总数与后台定时采样的平均 TPS。发送后清零计数，作为下一个周期的起点。
-        通过 _silent_stats_sent 保证一次静默只播报一次。
+    async def _send_period_stats(self, reason: str = "") -> None:
+        """播报一个统计周期的汇总：聊天消息数 + 平均 TPS + 当日在线时长。
+
+        触发时机不再分散在各处，而由 _silent_watcher_loop 的静默状态边沿统一决定，
+        并经 silent_stats_* 系列开关过滤。默认只在「每日定时静默自动结束」时播报；
+        手动开关静默（/mc silent on、WebUI）默认不播报。
+
+        统计口径：从上次播报（或插件启动）到本次触发；播报后清零作为下一周期起点。
         """
         if self._silent_stats_sent:
             return
         self._silent_stats_sent = True
         target = self._bridge_target or self.bridge_target_session
         if not target:
-            self.logger.info("静默开始统计：未设置转发目标，跳过播报")
+            self.logger.info("周期统计：未设置转发目标，跳过播报")
             self._msg_count = 0
             self._tps_samples = []
+            self._last_stats_at = datetime.now()
             return
 
         avg_tps = None
@@ -1535,26 +1702,30 @@ class MinecraftPlugin(Star):
             avg_tps = sum(self._tps_samples) / len(self._tps_samples)
         tps_str = f"{avg_tps:.1f}" if avg_tps is not None else "暂无数据"
 
-        lines = [
-            "📊 静默开始，本周期统计：",
-            f"  • 聊天消息：{self._msg_count} 条",
-            f"  • 平均 TPS：{tps_str}",
-        ]
+        lines = [f"📊 {reason or '周期统计'}"]
+        if self._last_stats_at:
+            lines.append(
+                f"  统计区间：{self._last_stats_at.strftime('%m-%d %H:%M')}"
+                f" → {datetime.now().strftime('%m-%d %H:%M')}"
+            )
+        lines.append(f"  • 聊天消息：{self._msg_count} 条")
+        lines.append(f"  • 平均 TPS：{tps_str}")
         if self._tps_samples:
             lines.append(f"  （基于 {len(self._tps_samples)} 次采样）")
         # 附带当日玩家在线时长
         day = datetime.now().strftime("%Y-%m-%d")
         pt = self._daily_playtime_text(day)
         if "\n" in pt:
-            lines = pt.splitlines() + [""] + lines
+            lines += [""] + pt.splitlines()
         try:
             await self.context.send_message(target, MessageChain([Plain("\n".join(lines))]))
         except Exception as e:
-            self.logger.error(f"静默开始统计播报失败: {e}")
+            self.logger.error(f"周期统计播报失败: {e}")
 
         # 播报后清零，作为下一周期起点
         self._msg_count = 0
         self._tps_samples = []
+        self._last_stats_at = datetime.now()
 
     async def _playtime(self, event: AstrMessageEvent, parts: list[str]) -> str:
         """查询玩家在线时长：/mc playtime [玩家] ；不带参数则列出当日全部玩家。"""
@@ -1587,25 +1758,26 @@ class MinecraftPlugin(Star):
         if sub == "off":
             self._silent_until = None
             self._silent_manual = False
-            # 静默已结束，重置统计播报标记，供下次静默使用
-            self._silent_stats_sent = False
-            # 若每日定时仍在生效，则不回放（仍处静默）
+            # 若每日定时仍在生效，则仍处于静默，不触发退出流程（不回放、不播报）
             if self._is_silent():
                 return "🔊 已关闭手动静默（每日定时仍生效），MC→QQ 转发将按定时恢复"
-            await self._flush_silent_buffer()
-            self._silent_prev_active = False
-            return "🔊 已关闭静默模式，缓存的动态已回放，MC→QQ 转发恢复"
+            # 统一走退出流程：回放缓冲 + 按开关决定是否播报周期统计
+            await self._on_silent_exit()
+            return "🔊 已关闭静默模式，MC→QQ 转发恢复"
         if sub == "on":
             rest = " ".join(parts[1:])
             dur = self._parse_duration(rest)
             if dur is None:
                 self._silent_manual = True
                 self._silent_until = None
-                await self._send_silent_start_stats()
+            else:
+                self._silent_until = datetime.now() + dur
+                self._silent_manual = False
+            # 手动开启：auto 由「当前是否处于每日定时时段」判定；
+            # 时段外的手动静默默认不播报统计（可用 silent_stats_on_manual 打开）
+            await self._on_silent_enter(self._in_schedule(datetime.now()))
+            if dur is None:
                 return "🔇 已开启静默模式（持续，直到 /mc silent off）"
-            self._silent_until = datetime.now() + dur
-            self._silent_manual = False
-            await self._send_silent_start_stats()
             return (
                 f"🔇 已开启静默模式，将持续 {self._fmt_duration(dur)}"
                 f"（至 {self._silent_until.strftime('%H:%M:%S')}）"
@@ -1618,7 +1790,7 @@ class MinecraftPlugin(Star):
                 return "时间格式错误，应为 HH:MM（如 23:00）"
             self._silent_until = self._next_datetime(t)
             self._silent_manual = False
-            await self._send_silent_start_stats()
+            await self._on_silent_enter(self._in_schedule(datetime.now()))
             return (
                 f"🔇 已开启静默模式（自定义时段），直到 "
                 f"{self._silent_until.strftime('%Y-%m-%d %H:%M')}"
@@ -1629,7 +1801,7 @@ class MinecraftPlugin(Star):
                 return "时段格式错误，应为 HH:MM-HH:MM（如 23:00-08:00）"
             if self._silent_schedule_start is None:
                 return "⏰ 已关闭每日定时静默"
-            # 到点进入静默时由消息兜底处播报统计（/mc silent 无 duration 分支不再立即播）
+            # 到点进入/退出由 _silent_watcher_loop 每 5 秒检测，统计按开关播报
             return (
                 f"⏰ 已设置每日定时静默："
                 f"{self._silent_schedule_start.strftime('%H:%M')}"
@@ -1640,7 +1812,7 @@ class MinecraftPlugin(Star):
         if dur is not None:
             self._silent_until = datetime.now() + dur
             self._silent_manual = False
-            await self._send_silent_start_stats()
+            await self._on_silent_enter(self._in_schedule(datetime.now()))
             return (
                 f"🔇 已开启静默模式，将持续 {self._fmt_duration(dur)}"
                 f"（至 {self._silent_until.strftime('%H:%M:%S')}）"
@@ -2040,6 +2212,20 @@ class MinecraftPlugin(Star):
                 "default_server": self.default_server or "",
                 "rcon_host": cfg.get("rcon_host", ""),
                 "rcon_port": _safe_int(cfg.get("rcon_port"), 25575),
+                # 自动行为开关
+                "silent_stats_enabled": self.silent_stats_enabled,
+                "silent_stats_on_auto_exit": self.silent_stats_on_auto_exit,
+                "silent_stats_on_auto_enter": self.silent_stats_on_auto_enter,
+                "silent_stats_on_manual": self.silent_stats_on_manual,
+                "silent_replay_enabled": self.silent_replay_enabled,
+                "silent_replay_detail": self.silent_replay_detail,
+                "tps_sampling_enabled": self.tps_sampling_enabled,
+                "playtime_tracking_enabled": self.playtime_tracking_enabled,
+                "bridge_notify_advancement": self.bridge_notify_advancement,
+                "bridge_filter_commands": self.bridge_filter_commands,
+                "bridge_notify_join_quit": self.bridge_notify_join_quit,
+                "bridge_notify_death": self.bridge_notify_death,
+                "stats_trigger": self._stats_trigger_desc(),
             })
         except Exception as e:
             return error_response(str(e))
@@ -2062,6 +2248,14 @@ class MinecraftPlugin(Star):
             if "tps_interval" in payload:
                 v = _safe_int(payload["tps_interval"], 10)
                 upd["tps_sample_interval_minutes"] = max(1, v)
+            # 自动行为开关：键名与 self 上的属性名一一对应，直接落盘并即时生效
+            for key in self._TOGGLE_KEYS:
+                if key in payload:
+                    val = bool(payload[key])
+                    setattr(self, key, val)
+                    upd[key] = val
+            if "tps_sampling_enabled" in payload:
+                self._ensure_tps_task()  # 采样任务随开关即时启停
             if upd:
                 self.config.update(upd)
                 try:
@@ -2100,12 +2294,11 @@ class MinecraftPlugin(Star):
             if action == "off":
                 self._silent_until = None
                 self._silent_manual = False
-                self._silent_stats_sent = False
                 if not self._is_silent():
-                    await self._flush_silent_buffer()
-                    self._silent_prev_active = False
+                    await self._on_silent_exit()
                 return json_response({"saved": True, "active": False})
             if action == "on":
+                # 与 /mc silent on 一致：手动开启默认不播报统计
                 dur = self._parse_duration(str(payload.get("duration") or ""))
                 if dur is None:
                     self._silent_manual = True
@@ -2113,7 +2306,7 @@ class MinecraftPlugin(Star):
                 else:
                     self._silent_until = datetime.now() + dur
                     self._silent_manual = False
-                await self._send_silent_start_stats()
+                await self._on_silent_enter(self._in_schedule(datetime.now()))
                 return json_response({"saved": True, "active": True})
             if action == "until":
                 t = self._parse_clock(str(payload.get("value") or ""))
@@ -2121,7 +2314,7 @@ class MinecraftPlugin(Star):
                     return error_response("时间格式错误，应为 HH:MM")
                 self._silent_until = self._next_datetime(t)
                 self._silent_manual = False
-                await self._send_silent_start_stats()
+                await self._on_silent_enter(self._in_schedule(datetime.now()))
                 return json_response({"saved": True, "active": True})
             if action == "schedule":
                 if not self._set_schedule(str(payload.get("value") or "")):
@@ -2191,9 +2384,18 @@ class MinecraftPlugin(Star):
             self.logger.info(f"鹊桥对接已启用，正在连接 {self.queqiao_url}")
         elif self.queqiao_enabled:
             self.logger.warning("queqiao_enabled=true 但未配置 queqiao_ws_url，跳过")
-        # TPS 采样：用于静默开始时播报平均 TPS（需启用性能监控且服务端支持 tps 指令）
-        if self.enable_monitor:
-            self._spawn(self._tps_sample_loop())
+        # TPS 采样：用于周期统计播报与 WebUI 趋势图（需启用性能监控且服务端支持 tps）
+        self._ensure_tps_task()
+        # 静默状态监视：周期统计播报与回放的唯一触发源，开销极低，始终启动
+        self._silent_prev_flag = self._is_silent()
+        self._spawn(self._silent_watcher_loop())
+        self.logger.info(
+            f"自动行为开关：统计播报={self.silent_stats_enabled}"
+            f"（时机：{self._stats_trigger_desc()}）"
+            f"，静默回放={self.silent_replay_enabled}"
+            f"，TPS 采样={self.tps_sampling_enabled}"
+            f"，在线时长统计={self.playtime_tracking_enabled}"
+        )
         self.logger.info(
             f"Minecraft 插件初始化完成：{len(self.servers)} 个服务器，默认 {self.default_server or '无'}"
         )

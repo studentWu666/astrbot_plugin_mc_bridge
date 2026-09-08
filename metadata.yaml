@@ -12,9 +12,11 @@ desc: |
   - 定时任务：自动备份（save-all）、循环公告、性能监控播报
   - 聊天桥接：鹊桥（QueQiao）mod WebSocket 对接，MC 与 QQ 双向聊天/事件转发
   - 静默模式：/mc silent 定时关闭 MC->QQ 转发，静默期消息缓存并在结束后回放
+  - 周期统计：每日定时静默结束时播报本周期聊天消息数/平均 TPS/在线时长，时机可配、可关闭
+  - 自动行为开关：统计播报、静默回放、TPS 采样、在线时长统计、事件转发均可单独关闭
   - 安全加固：内置线程安全 RCON 客户端（不依赖 mcrcon）、指令换行注入过滤、管理员权限校验
 author: "studentWu666"
-version: 2.3.5
+version: 2.3.6
 repo: "https://github.com/studentWu666/astrbot_plugin_mc_bridge"
 social_link: "https://github.com/studentWu666"
 license: "AGPL-3.0"

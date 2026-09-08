@@ -122,6 +122,20 @@ input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px 
 
 .empty { color: var(--text-3); font-size: 13px; padding: 18px; text-align: center; }
 
+/* 自动行为开关 */
+.switches { display: flex; flex-direction: column; gap: 6px; }
+.sw-row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 9px 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--card-2); cursor: pointer; transition: background .15s, border-color .15s; }
+.sw-row:hover { background: var(--accent-soft); border-color: var(--border-2); }
+.sw-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sw-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.sw-tip { font-size: 11px; color: var(--text-3); line-height: 1.4; }
+.switch.small { transform: scale(.82); transform-origin: right center; flex: none; }
+.sw-trigger { margin-top: 12px; padding: 9px 12px; border-radius: 10px;
+  background: var(--accent-soft); color: var(--accent-2);
+  font-size: 12px; line-height: 1.5; }
+
 @media (max-width: 720px) {
   main { grid-template-columns: 1fr; }
   .kpis.four, .server-grid { grid-template-columns: 1fr 1fr; }
